@@ -1,0 +1,43 @@
+= Prang
+
+A pure-Python library for validating XML documents aginst an
+https://en.wikipedia.org/wiki/RELAX_NG[RELAX NG schema].
+ 
+Prang runs on Python 2.7 and 3.4 on both CPython and PyPy.
+
+* http://pythonhosted.org/prang/[User documentation]
+* https://github.com/tlocke/prang[Contribute on GitHub]
+* Licensed under the http://opensource.org/licenses/MIT[MIT Licence].
+
+== Regression Tests
+
+To run the regression tests, install http://testrun.org/tox/latest/[tox]:
+
+ pip install tox
+
+
+then run `tox` from the `prang` directory:
+
+ tox
+
+
+== Building The Documentation
+
+The docs are written using Asciidoctor. To build them, install asciidoctor:
+
+ apt-get install asciidoctor
+
+Then type:
+
+ asciidoctor docs/index.adoc
+
+and the doc will appear at `docs/index.html`.
+
+== Doing A Release Of Prang
+
+Run `tox` make sure all tests pass, then update the release notes in
+`docs/index.adoc` then do:
+
+ asciidoctor docs/index.adoc
+ git tag -a x.y.z -m "Version x.y.z"
+ python setup.py register sdist bdist_wheel upload upload_docs

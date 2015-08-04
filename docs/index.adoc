@@ -1,0 +1,37 @@
+= Prang
+:toc:
+:toclevels: 1
+
+
+A pure-Python library for validating XML documents aginst an
+https://en.wikipedia.org/wiki/RELAX_NG[RELAX NG schema].
+ 
+Prang runs on Python 2.7 and 3.4 on both CPython and PyPy and supports ODF 1.1
+and 1.2.
+
+See the https://github.com/tlocke/prang[GitHub repository] for code, bugs,
+feature requests etc.
+
+
+== Installation
+
+It's a good idea to set up a virtualenv:
+
+ virtualenv venv
+ . venv/bin/activate
+
+then install Prang with pip:
+
+ pip install prang
+
+
+== Quickstart
+
+
+
+== Release Notes
+
+
+=== Version 0.0.0, 2015-08-04
+
+- Initial release, nothing to see yet.
