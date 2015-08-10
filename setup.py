@@ -28,5 +28,5 @@ setup(
     ],
     keywords="RELAX NG XML schema",
     packages=("prang",),
-    install_requires=['six'],
+    install_requires=['six', 'requests'],
 )

@@ -3,8 +3,8 @@
 :toclevels: 1
 
 
-A pure-Python library for validating XML documents aginst an
-https://en.wikipedia.org/wiki/RELAX_NG[RELAX NG schema].
+A pure-Python library and command line tool for validating XML documents aginst
+an https://en.wikipedia.org/wiki/RELAX_NG[RELAX NG schema].
  
 Prang runs on Python 2.7 and 3.4 on both CPython and PyPy and supports ODF 1.1
 and 1.2.
@@ -27,7 +27,44 @@ then install Prang with pip:
 
 == Quickstart
 
+to use from the command line:
 
+ prang odf.rng content.xml
+
+this uses the `odf.rng` RELAX NG schema file to validate the `content.xml`
+file. Any errors are written to `stdout`.
+
+To use as a library:
+
+....
+>>> import prang
+>>>
+>>> schema = """
+... <?xml version="1.0"?>
+...   <element name="foo"
+...       xmlns="http://relaxng.org/ns/structure/1.0"
+...       xmlns:a="http://relaxng.org/ns/annotation/1.0"
+...       xmlns:ex1="http://www.example.com/n1"
+...       xmlns:ex2="http://www.example.com/n2">
+...     <a:documentation>A foo element.</a:document>
+...     <element name="ex1:bar1">
+...     <empty/>
+...   </element>
+...   <element name="ex2:bar2">
+...    <empty/>
+...   </element>
+...   </element>"""
+>>> 
+>>> xml_doc = """
+... <?xml version="1.0"?>
+... <foo>
+...   <pre1:bar1 xmlns:pre1="http://www.example.com/n1"/>
+...   <pre2:bar2 xmlns:pre2="http://www.example.com/n2"/>
+... </foo>"""
+>>>
+>>> prang.is_valid(schema, xml_doc)
+True
+....
 
 == Release Notes
 
