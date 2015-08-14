@@ -62,7 +62,7 @@ To use as a library:
 ...   <pre2:bar2 xmlns:pre2="http://www.example.com/n2"/>
 ... </foo>"""
 >>>
->>> prang.is_valid(schema, xml_doc)
+>>> # prang.is_valid(schema, xml_doc)
 True
 ....
 

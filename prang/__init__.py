@@ -9,9 +9,10 @@ del get_versions
 
 
 class PrangElement():
-    def __init__(self, parent, name, base_uri, attrs, children):
+    def __init__(self, parent, name, namespaces, base_uri, attrs, children):
         self.parent = parent
         self.name = name
+        self.namespaces = namespaces
         self.base_uri = base_uri
         self.attrs = attrs
         self.children = children
@@ -28,7 +29,8 @@ class PrangElement():
         wspace = '  ' * level
 
         out.append(wspace + '<' + self.name)
-        for attr_name, attr_value in iteritems(self.attrs):
+        for attr_name, attr_value in \
+                sorted([(k, v) for k, v in iteritems(self.attrs)]):
             out.append(
                 '\n' + wspace + ' ' * 4 + attr_name + '="' + attr_value + '"')
         if len(self.children) > 0:
@@ -56,30 +58,51 @@ class PrangElement():
             out.append('/>\n')
         return ''.join(out)
 
+    def insert_child(self, idx, child):
+        if isinstance(child, PrangElement):
+            child.parent = self
+        self.children.insert(idx, child)
 
-NATIVE_NAMESPACES = (None, 'http://relaxng.org/ns/structure/1.0')
+    def append_child(self, child):
+        if isinstance(child, PrangElement):
+            child.parent = self
+        self.children.append(child)
+
+NATIVE_NAMESPACES = (
+    None, 'http://relaxng.org/ns/structure/1.0',
+    'http://www.w3.org/2000/xmlns')
 
 
 def to_prang_elem(parent, elem_dom):
     elem_dom.normalize()
 
-    base_uri = None
+    if parent is None:
+        namespaces = {'': ''}
+        base_uri = ''
+    else:
+        namespaces = parent.namespaces.copy()
+        base_uri = parent.base_uri
+
     attrs = {}
     attrs_dom = elem_dom.attributes
     if attrs_dom is not None:
         for i in range(attrs_dom.length):
             attr = attrs_dom.item(i)
+            attr_nsuri = attr.namespaceURI
             if attr.name == 'xml:base':
                 base_uri = attr.value
 
+            if attr.prefix == 'xmlns' or attr.name == 'xmlns':
+                namespaces[attr.localName] = attr.value
+                attr_nsuri = 'http://www.w3.org/2000/xmlns'
+
             # This is the anotation simplification rule for attributes
-            if attr.namespaceURI in NATIVE_NAMESPACES:
+            if attr_nsuri in NATIVE_NAMESPACES:
                 attrs[attr.localName] = attr.value
-    if base_uri is None:
-        base_uri = '' if parent is None else parent.base_uri
 
     children = []
-    elem = PrangElement(parent, elem_dom.localName, base_uri, attrs, children)
+    elem = PrangElement(
+        parent, elem_dom.localName, namespaces, base_uri, attrs, children)
     for child in elem_dom.childNodes:
         node_type = child.nodeType
         if node_type == xml.dom.Node.ELEMENT_NODE and \
@@ -290,6 +313,243 @@ def simplify_include(elem, idx):
                 simplify_include(child, i)
 
 
+def simplify_name_attribute(elem):
+    if elem.name in ('element', 'attribute') and 'name' in elem.attrs:
+        attr_parts = elem.attrs['name'].split(':')
+        if len(attr_parts) == 1:
+            name_elem_name = 'name'
+        else:
+            name_elem_name = attr_parts[0] + ':name'
+
+        name_elem_attrs = {}
+        if elem.name == 'attribute' and 'ns' not in elem.attrs:
+            name_elem_attrs['ns'] = ''
+
+        name_elem = PrangElement(
+            elem, name_elem_name, elem.namespaces, elem.base_uri,
+            name_elem_attrs, [attr_parts[-1]])
+        elem.children.insert(0, name_elem)
+        del elem.attrs['name']
+
+    for child in elem.children:
+        if not isinstance(child, text_type):
+            simplify_name_attribute(child)
+
+
+def simplify_ns_attribute(elem):
+    def add_ns_attribute(el):
+        if (
+                el.name.endswith(':name') or
+                el.name in ('name', 'nsName', 'value')) and \
+                'ns' not in el.attrs:
+            ancestor = el.parent
+            ns = None
+            while ancestor is not None and ns is None:
+                ns = ancestor.attrs.get('ns', None)
+                ancestor = ancestor.parent
+
+            el.attrs['ns'] = '' if ns is None else ns
+
+        for child in el.children:
+            if not isinstance(child, text_type):
+                add_ns_attribute(child)
+
+    add_ns_attribute(elem)
+
+    def remove_ns_attribute(el):
+        if (
+                el.name.endswith(':name') or
+                el.name not in ('name', 'nsName', 'value')) and \
+                'ns' in el.attrs:
+            del el.attrs['ns']
+
+        for child in el.children:
+            if not isinstance(child, text_type):
+                remove_ns_attribute(child)
+
+    remove_ns_attribute(elem)
+
+
+def simplify_qnames(elem):
+    if elem.name.endswith(':name'):
+        prefix, local_name = elem.name.split(':')
+        elem.attrs['ns'] = elem.namespaces[prefix]
+        elem.name = local_name
+
+    for child in elem.children:
+        if not isinstance(child, text_type):
+            simplify_qnames(child)
+
+
+def simplify_div(elem, idx):
+    if elem.name == 'div':
+        for child in elem.children.reverse():
+            elem.parent.insert_child(idx, child)
+        recurse_children = elem.parent.children
+    else:
+        recurse_children = elem.children
+
+    for i, child in enumerate(recurse_children):
+        if not isinstance(child, text_type):
+            simplify_div(child, i)
+
+
+def simplify_4_12_num_children(elem, idx):
+    recurse_elem = elem
+    '''
+    if elem.name in (
+            'define', 'oneOrMore', 'zeroOrMore', 'optional', 'list',
+            'mixed') and len(elem.children) > 1:
+        group_elem = PrangElement(
+            elem, 'group', elem.namespaces.copy(), elem.base_uri, {}, [])
+
+        for child in elem.children:
+            group_elem.append_child(child)
+
+        elem.children[:] = [group_elem]
+
+    elif elem.name == 'element':
+        if len(elem.children) > 2:
+            group_elem = PrangElement(
+                elem, 'group', elem.namespaces, elem.base_uri, {}, [])
+            for child in elem.children[2:]:
+                group_elem.append_child(child)
+            elem.children[2:] = [group_elem]
+
+    elif elem.name == 'except':
+        if len(elem.children) > 1:
+            choice_elem = PrangElement(
+                elem, 'choice', elem.namespaces, elem.base_uri, {}, [])
+            for child in elem.children[1:]:
+                choice_elem.append_child(child)
+            elem.children[1:] = [choice_elem]
+
+    elif elem.name == 'attribute':
+        if len(elem.children) == 1:
+            elem.children.append(
+                PrangElement(
+                    elem, 'text', elem.namespaces, elem.base_uri, {}, []))
+    '''
+    if elem.name in ('choice', 'group', 'interleave'):
+        len_children = len(elem.children)
+        print('elem name', elem.name)
+        print('len children', len_children)
+        if len_children == 1:
+            del elem.parent.children[idx]
+            elem.parent.insert_child(idx, elem.children[0])
+            recurse_elem = elem.parent
+        elif len_children > 2:
+            new_elem = PrangElement(
+                elem, elem.name, elem.namespaces, elem.base_uri, {}, [])
+            for child in elem.children[:-1]:
+                new_elem.append_child(child)
+            elem.children[:-1] = [new_elem]
+
+    for i, child in enumerate(recurse_elem.children):
+        if isinstance(child, PrangElement):
+            simplify_4_12_num_children(child, i)
+
+
+def simplify_4_13_mixed(elem):
+    if elem.name == 'mixed':
+        elem.name = 'interleave'
+        elem.children.append(
+            PrangElement(
+                elem, 'text', elem.namespaces.copy(), elem.base_uri, {}, []))
+    for child in elem.children:
+        if not isinstance(child, text_type):
+            simplify_4_13_mixed(child)
+
+
+def simplify_4_14_optional(elem):
+    if elem.name == 'optional':
+        elem.name = 'choice'
+        elem.children.append(
+            PrangElement(
+                elem, 'empty', elem.namespaces.copy(), elem.base_uri, {}, []))
+    for child in elem.children:
+        if not isinstance(child, text_type):
+            simplify_4_14_optional(child)
+
+
+def simplify_4_15_zero_or_more(elem):
+    if elem.name == 'zeroOrMore':
+        elem.name = 'choice'
+        one_or_more_elem = PrangElement(
+            elem, 'oneOrMore', elem.namespaces.copy(), elem.base_uri, {}, [])
+        for child in elem.children:
+            one_or_more_elem.append_child(child)
+        elem.children[:] = [
+            one_or_more_elem, PrangElement(
+                elem, 'empty', elem.namespaces.copy(), elem.base_uri, {}, [])]
+
+    for child in elem.children:
+        if not isinstance(child, text_type):
+            simplify_4_15_zero_or_more(child)
+
+
+def find_descendent(elem, names):
+    for child in elem.children:
+        if child.name in names:
+            return child
+        else:
+            desc = find_descendent(child, names)
+            if desc is not None:
+                return desc
+    return None
+
+
+def simplify_constraints(elem, i):
+    if elem.name == 'except':
+        if elem.parent.name == 'anyName' and \
+                find_descendent(elem, ('anyName',)) is not None:
+            raise Exception(
+                "An except element that is a child of an anyName element must "
+                "not have any anyName descendant elements.")
+        if elem.parent.name == 'nsName' and \
+                find_descendent(elem, ('nsName', 'anyName')) is not None:
+            raise Exception(
+                "An except element that is a child of an nsName element must "
+                "not have any nsName or anyName descendant elements.")
+
+    if elem.name == 'attribute' and len(elem.children) > 0:
+        first_child = elem.children[0]
+        if first_child.name == 'name':
+            found_elem = first_child
+        else:
+            found_elem = find_descendent(first_child, ('name', ))
+
+        if found_elem is not None and \
+                found_elem.attrs.get('ns', None) == '' and \
+                '.'.join(found_elem.children).strip() == 'xmlns':
+
+            raise Exception(
+                "A name element that occurs as the first child of an "
+                "attribute element or as the descendant of the first child of "
+                "an attribute element and that has an ns attribute with value "
+                "equal to the empty string must not have content equal to "
+                "xmlns.")
+
+        if first_child.name in ('name', 'nsName'):
+            found_elem = first_child
+        else:
+            found_elem = find_descendent(first_child, ('name', 'nsName'))
+
+        if found_elem is not None and \
+                found_elem.attrs.get('ns', None) == \
+                'http://www.w3.org/2000/xmlns':
+
+            raise Exception(
+                "A name or nsName element that occurs as the first child of "
+                "an attribute element or as the descendant of the first child "
+                "of an attribute element must not have an ns attribute with "
+                "value http://www.w3.org/2000/xmlns.")
+
+    for i, child in enumerate(elem.children):
+        if not isinstance(child, text_type):
+            simplify_constraints(child, i)
+
+
 def simplify(schema_elem):
     simplify_whitespace(schema_elem)
     simplify_datalibrary_add(schema_elem)
@@ -298,3 +558,12 @@ def simplify(schema_elem):
     simplify_href(schema_elem)
     simplify_externalRef(schema_elem, None)
     simplify_include(schema_elem, None)
+    simplify_name_attribute(schema_elem)
+    simplify_ns_attribute(schema_elem)
+    simplify_qnames(schema_elem)
+    simplify_div(schema_elem, None)
+    simplify_4_12_num_children(schema_elem, None)
+    simplify_4_13_mixed(schema_elem)
+    simplify_4_14_optional(schema_elem)
+    simplify_4_15_zero_or_more(schema_elem)
+    simplify_constraints(schema_elem, None)
