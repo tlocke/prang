@@ -85,6 +85,42 @@ def test_simplification():
 '''
 
 
+def test_4_11_div():
+    schema_str = ''.join(
+        [
+            '<?xml version="1.0"?>',
+            '<element name="addressBook" ',
+            'xmlns="http://relaxng.org/ns/structure/1.0">',
+            '<div>',
+            '<element name="email">',
+            '<text/>',
+            '</element>',
+            '<element name="name">',
+            '<text/>',
+            '</element>',
+            '</div>',
+            '</element>'])
+
+    desired_schema_str = """<?xml version="1.0"?>
+<element
+    name="addressBook"
+    xmlns="http://relaxng.org/ns/structure/1.0">
+  <div>
+    <element
+        name="email">
+      <text/>
+    </element>
+    <element
+        name="name">
+      <text/>
+    </element>
+  </div>
+</element>
+"""
+    compare_simplify(
+        prang.simplify_4_12_num_children, schema_str, desired_schema_str, None)
+
+
 def test_4_12_num_children():
     schema_str = ''.join(
         [
@@ -211,3 +247,62 @@ def test_4_15_zero_or_more_element():
 """
     compare_simplify(
         prang.simplify_4_15_zero_or_more, schema_str, desired_schema_str)
+
+
+def test_4_17_combine():
+    schema_str = ''.join(
+        [
+            '<?xml version="1.0"?>',
+            '<grammar>',
+            '<start>',
+            '<element name="addressBook">',
+            '<zeroOrMore>',
+            '<element name="card">',
+            '<ref name="card.attlist"/>',
+            '</element>',
+            '</zeroOrMore>',
+            '</element>',
+            '</start>',
+            '<define name="card.attlist" combine="interleave">',
+            '<attribute name="name">',
+            '<text/>',
+            '</attribute>',
+            '</define>',
+            '<define name="card.attlist" combine="interleave">',
+            '<attribute name="email">',
+            '<text/>',
+            '</attribute>',
+            '</define>',
+            '</grammar>'])
+
+    desired_schema_str = """<?xml version="1.0"?>
+<grammar>
+  <start>
+    <element
+        name="addressBook">
+      <zeroOrMore>
+        <element
+            name="card">
+          <ref
+              name="card.attlist"/>
+        </element>
+      </zeroOrMore>
+    </element>
+  </start>
+  <define
+      name="card.attlist">
+    <interleave>
+      <attribute
+          name="name">
+        <text/>
+      </attribute>
+      <attribute
+          name="email">
+        <text/>
+      </attribute>
+    </interleave>
+  </define>
+</grammar>
+"""
+    compare_simplify(
+        prang.simplify_4_17_combine, schema_str, desired_schema_str, None)
