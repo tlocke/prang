@@ -68,6 +68,12 @@ class PrangElement():
             child.parent = self
         self.children.append(child)
 
+    def enumerate_child_elements(self):
+        return (
+            (i, c) for i, c in enumerate(self.children)
+            if isinstance(c, PrangElement))
+
+
 NATIVE_NAMESPACES = (
     None, 'http://relaxng.org/ns/structure/1.0',
     'http://www.w3.org/2000/xmlns')
@@ -444,9 +450,8 @@ def simplify_4_12_num_children(elem, idx):
                 new_elem.append_child(child)
             elem.children[:-1] = [new_elem]
 
-    for i, child in enumerate(recurse_elem.children):
-        if isinstance(child, PrangElement):
-            simplify_4_12_num_children(child, i)
+    for i, child in recurse_elem.enumerate_child_elements():
+        simplify_4_12_num_children(child, i)
 
 
 def simplify_4_13_mixed(elem):
@@ -631,9 +636,8 @@ def simplify_4_18_grammar(elem, i):
                     dups.append(el, i)
                 else:
                     names.add(def_name)
-            for j, c in enumerate(el.children):
-                if isinstance(c, PrangElement):
-                    find_defs(c, j)
+            for j, c in el.enumerate_child_elements():
+                find_defs(c, j)
 
         find_defs(elem, None)
 
@@ -660,9 +664,8 @@ def simplify_4_18_grammar(elem, i):
                 if el.name == 'grammar':
                     grammar_count += 1
 
-                for j, c in enumerate(el.children):
-                    if isinstance(c, PrangElement):
-                        find_refs(c, j)
+                for j, c in el.enumerate_child_elements():
+                    find_refs(c, j)
             find_refs(dup_el, dup_idx)
             elem.append_child(dup_el)
 
@@ -673,13 +676,97 @@ def simplify_4_18_grammar(elem, i):
                 del el.parent.children[i]
                 el.parent.insert_child(i, el.children[0])
 
-            for j, c in enumerate(el.children):
-                if isinstance(c, PrangElement):
-                    handle_refs(c, j)
+            for j, c in el.enumerate_child_elements():
+                handle_refs(c, j)
 
-    for i, child in enumerate(elem.children):
-        if not isinstance(child, text_type):
-            simplify_4_18_grammar(child, i)
+    for i, child in elem.enumerate_child_elements():
+        simplify_4_18_grammar(child, i)
+
+
+def simplify_4_19_define_ref(grammar_el):
+    refs = set()
+    defs = set()
+
+    def find_defs_refs(i, elem):
+        if elem.name == 'ref':
+            refs.add(elem)
+        elif elem.name == 'define':
+            defs.append((i, elem))
+        for i, child in enumerate(reversed(elem.children)):
+            if isinstance(child, PrangElement):
+                find_defs_refs(i, child)
+
+    find_defs_refs(grammar_el)
+
+    # Find names of reachable defines
+    reachable = set()
+
+    reachable_found = True
+    while reachable_found:
+        reachable_found = False
+        for elem in list(refs):
+            parent = elem.parent
+            while parent is not None and not reachable_found:
+                if parent.name == 'start' or (
+                        parent.name == 'define' and
+                        parent.attrs['name'] in reachable) and \
+                        elem.attrs['name'] not in reachable:
+                    reachable.add(elem.attrs['name'])
+                    refs.remove(elem)
+                    reachable_found = True
+                parent = parent.parent
+
+    # Remove unreachable defines
+    for i, elem in defs:
+        if elem.attrs['name'] not in reachable:
+            del elem.parent.children[i]
+            defs.remove((i, elem))
+
+    def find_elements(i, el):
+        if el.name == 'element' and el.parent.name != 'define':
+            def_name = el.attrs['name']
+            while def_name not in reachable:
+                def_name += '_c'
+            reachable.add(def_name)
+            ref_el = PrangElement(el.parent, 'ref', [], {'name': def_name})
+            del el.parent.children[i]
+            el.parent.insert_child(i, ref_el)
+            def_el = PrangElement(grammar_el, 'define', [], {'name': def_name})
+            grammar_el.append_child(def_el)
+            def_el.append_child(el)
+
+        for j, child in el.enumerate_child_elements():
+            find_elements(j, child)
+
+    find_elements(None, grammar_el)
+
+    # Expandable refs
+    defs = {}
+    for i, child in enumerate(grammar_el.children):
+        if child.name == 'define':
+            if sum(1 for c in child.iter_child_elements('element')) > 0:
+                defs[child.attrs['name']] = (i, child)
+
+    def find_expandable_refs(i, el):
+        if el.name == 'ref':
+            has_anc = False
+            parent = el.parent
+            while parent is not None and not has_anc:
+                if parent.name in ('start', 'element'):
+                    has_anc = True
+                parent = parent.parent
+            ref_name = el.attrs['name']
+            if has_anc and ref_name in defs:
+                for child in defs[ref_name].children:
+                    el.append_child(child)
+        for j, child in el.enumerate_child_elements():
+            find_expandable_refs(j, child)
+
+    find_expandable_refs(None, grammar_el)
+
+    # Remove expandable defs
+    for i, el in defs.values():
+        del el.parent.children[i]
 
 
 def simplify(schema_elem):
@@ -701,3 +788,4 @@ def simplify(schema_elem):
     simplify_4_16_constraints(schema_elem, None)
     simplify_4_17_combine(schema_elem, None)
     simplify_4_18_grammar(schema_elem, None)
+    simplify_4_19_define_ref(schema_elem)

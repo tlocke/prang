@@ -306,3 +306,94 @@ def test_4_17_combine():
 """
     compare_simplify(
         prang.simplify_4_17_combine, schema_str, desired_schema_str, None)
+
+
+'''
+def test_4_18_grammar():
+    schema_str = ''.join(
+        [
+            '<?xml version="1.0"?>',
+            '<grammar>',
+            '<grammar>',
+            '<define name="inline">',
+            '<zeroOrMore>',
+            '<ref name="inline.class"/>',
+            '</zeroOrMore>',
+            '</define>',
+            '<define name="inline.class">',
+            '<choice>',
+            '<text/>',
+            '<element name="bold">',
+            '<ref name="inline"/>',
+            '</element>',
+            '<element name="italic">',
+            '<ref name="inline"/>',
+            '</element>',
+            '</choice>',
+            '</define>',
+            '</grammar>',
+            '<start>',
+            '<element name="doc">',
+            '<zeroOrMore>',
+            '<element name="p">',
+            '<ref name="inline"/>',
+            '</element>',
+            '</zeroOrMore>',
+            '</element>',
+            '</start>',
+            '<define name="inline.class" combine="choice">',
+            '<choice>',
+            '<element name="code">',
+            '<ref name="inline">',
+            '</element>',
+            '<element name="em">',
+            '<ref name="inline">',
+            '</element>',
+            '</choice>',
+            '</define>',
+            '</grammar>'])
+
+    desired_schema_str = """<?xml version="1.0"?>
+<grammar>
+  <grammar>
+    <define name="inline">
+      <zeroOrMore>
+        <ref name="inline.class"/>
+      </zeroOrMore>
+    </define>
+    <define name="inline.class">
+      <choice>
+        <text/>
+        <element name="bold">
+          <ref name="inline"/>
+        </element>
+        <element name="italic">
+          <ref name="inline"/>
+        </element>
+      </choice>
+    </define>
+  </grammar>
+  <start>
+    <element name="doc">
+      <zeroOrMore>
+        <element name="p">
+          <ref name="inline"/>',
+        </element>
+      </zeroOrMore>
+    </element>
+  </start>
+  <define name="inline.class" combine="choice">
+    <choice>
+      <element name="code">
+        <ref name="inline">
+      </element>
+      <element name="em">
+        <ref name="inline">
+      </element>
+    </choice>
+  </define>
+</grammar>
+"""
+    compare_simplify(
+        prang.simplify_4_17_combine, schema_str, desired_schema_str, None)
+'''
