@@ -3,19 +3,24 @@ import xml.dom
 import binascii
 import urllib.parse
 import requests
+from itertools import chain, islice
 from ._version import get_versions
 __version__ = get_versions()['version']
 del get_versions
 
 
 class PrangElement():
-    def __init__(self, parent, name, namespaces, base_uri, attrs, children):
-        self.parent = parent
+    def __init__(self, name, namespaces, base_uri, attrs):
+        self._parent = None
         self.name = name
         self.namespaces = namespaces
         self.base_uri = base_uri
         self.attrs = attrs
-        self.children = children
+        self._children = []
+
+    @property
+    def parent(self):
+        return self._parent
 
     def __str__(self):
         out = []
@@ -33,10 +38,10 @@ class PrangElement():
                 sorted([(k, v) for k, v in iteritems(self.attrs)]):
             out.append(
                 '\n' + wspace + ' ' * 4 + attr_name + '="' + attr_value + '"')
-        if len(self.children) > 0:
+        if sum(1 for c in self.iter_children()) > 0:
             child_wspace = wspace + ' ' * 2
             out.append('>\n')
-            for child in self.children:
+            for child in self.iter_children():
                 if isinstance(child, text_type):
                     length = 0
                     line = []
@@ -59,31 +64,74 @@ class PrangElement():
         return ''.join(out)
 
     def insert_child(self, idx, child):
+        if not isinstance(child, (PrangElement, text_type)):
+            raise Exception("A child must be an element or string.")
+
         if isinstance(child, PrangElement):
-            child.parent = self
-        self.children.insert(idx, child)
+            child.remove()
+            if child.contains_element(self):
+                raise Exception("Can't create a circular reference.")
+            child._parent = self
+        self._children.insert(idx, child)
+
+    def contains_element(self, element):
+        if self is element:
+            return True
+        for child in self.iter_child_elements():
+            if child.contains_element(element):
+                return True
+        return False
 
     def append_child(self, child):
-        if isinstance(child, PrangElement):
-            child.parent = self
-        self.children.append(child)
+        self.insert_child(sum(1 for c in self.iter_children()), child)
+
+    def remove(self):
+        if self.parent is not None:
+            return self.parent.remove_child(self)
+
+    def remove_child(self, child):
+        for i in range(len(self._children)):
+            c = self._children[i]
+            if c is child:
+                if isinstance(c, PrangElement):
+                    c._parent = None
+                del self._children[i]
+                return i
+        raise Exception(
+            "This should never happen. The parent's children doesn't "
+            "contain the child.")
 
     def enumerate_child_elements(self):
         return (
             (i, c) for i, c in enumerate(self.children)
             if isinstance(c, PrangElement))
 
+    def iter_child_elements(self, names=None):
+        if names is None:
+            return (c for c in self._children if isinstance(c, PrangElement))
+        else:
+            return (
+                c for c in self._children
+                if isinstance(c, PrangElement) and c.name in names)
+
+    def iter_children(self):
+        return self._children
+
+    '''
+    def check_integrity(self):
+        for
+    '''
 
 NATIVE_NAMESPACES = (
     None, 'http://relaxng.org/ns/structure/1.0',
-    'http://www.w3.org/2000/xmlns')
+    'http://www.w3.org/2000/xmlns', 'http://www.w3.org/XML/1998/namespace')
 
 
 def to_prang_elem(parent, elem_dom):
     elem_dom.normalize()
 
     if parent is None:
-        namespaces = {'': ''}
+        namespaces = {'': '', 'xml': 'http://www.w3.org/XML/1998/namespace'}
         base_uri = ''
     else:
         namespaces = parent.namespaces.copy()
@@ -106,16 +154,14 @@ def to_prang_elem(parent, elem_dom):
             if attr_nsuri in NATIVE_NAMESPACES:
                 attrs[attr.localName] = attr.value
 
-    children = []
-    elem = PrangElement(
-        parent, elem_dom.localName, namespaces, base_uri, attrs, children)
+    elem = PrangElement(elem_dom.localName, namespaces, base_uri, attrs)
     for child in elem_dom.childNodes:
         node_type = child.nodeType
         if node_type == xml.dom.Node.ELEMENT_NODE and \
                 child.namespaceURI in NATIVE_NAMESPACES:
-            children.append(to_prang_elem(elem, child))
+            elem.append_child(to_prang_elem(elem, child))
         elif node_type == xml.dom.Node.TEXT_NODE:
-            children.append(child.data)
+            elem.append_child(child.data)
 
     return elem
 
@@ -132,23 +178,19 @@ def is_valid(schema, doc):
     schema_dom = simplify(schema_elem)
 
 
-def simplify_whitespace(elem):
+def simplify_4_2_whitespace(elem):
     if elem.name == 'name':
         for attr_name, attr_value in list(iteritems(elem.attrs)):
             if attr_name in ('name', 'type', 'combine'):
                 elem.attrs[attr_name] = attr_value.strip()
 
     if elem.name not in ('value', 'param'):
-        children = elem.children
-        new_children = []
-        for child in children:
-            if isinstance(child, text_type):
-                if len(child.split()) > 0:
-                    new_children.append(child)
-            else:
-                new_children.append(child)
-                simplify_whitespace(child)
-        elem.children = new_children
+        for child in list(elem.iter_children()):
+            if isinstance(child, text_type) and len(child.split()) == 0:
+                elem.remove_child(child)
+
+    for child in elem.iter_child_elements():
+        simplify_4_2_whitespace(child)
 
 
 def xlink_encode(href):
@@ -164,7 +206,7 @@ def xlink_encode(href):
     return ''.join(new_value)
 
 
-def simplify_datalibrary_add(elem):
+def simplify_datalibrary_4_3_add(elem):
     attrs = elem.attrs
     datatypeLibrary = None
 
@@ -175,26 +217,24 @@ def simplify_datalibrary_add(elem):
     if elem.name in ('data', 'value') and datatypeLibrary is None:
         parent = elem.parent
         while datatypeLibrary is None and parent is not None:
-            for name, value in parent.attrs:
+            for name, value in iteritems(parent.attrs):
                 if name == 'datatypeLibrary':
                     datatypeLibrary = value
-            parent = elem.parent
+            parent = parent.parent
         if datatypeLibrary is None:
             datatypeLibrary = ''
         attrs['datatypeLibrary'] = datatypeLibrary
 
-    for child in elem.children:
-        if not isinstance(child, text_type):
-            simplify_datalibrary_add(child)
+    for child in elem.iter_child_elements():
+        simplify_datalibrary_4_3_add(child)
 
 
-def simplify_datalibrary_remove(elem):
+def simplify_datalibrary_4_3_remove(elem):
     if elem.name not in ('data', 'value') and 'datatypeLibrary' in elem.attrs:
         del elem.attrs['datatypeLibrary']
 
-    for child in elem.children:
-        if not isinstance(child, text_type):
-            simplify_datalibrary_remove(child)
+    for child in elem.iter_child_elements():
+        simplify_datalibrary_4_3_remove(child)
 
 
 def simplify_type_value(elem):
@@ -202,9 +242,8 @@ def simplify_type_value(elem):
         elem.attrs['type'] = 'token'
         elem.attrs['datatypeLibrary'] = ''
 
-    for child in elem.children:
-        if not isinstance(child, text_type):
-            simplify_type_value(child)
+    for child in elem.iter_child_elements():
+        simplify_type_value(child)
 
 
 def simplify_href(elem):
@@ -212,12 +251,11 @@ def simplify_href(elem):
         elem.attrs['href'] = urllib.parse.urljoin(
             elem.base_uri, xlink_encode(elem.attrs['href']))
 
-    for child in elem.children:
-        if not isinstance(child, text_type):
-            simplify_href(child)
+    for child in elem.iter_child_elements():
+        simplify_href(child)
 
 
-def simplify_externalRef(elem, idx):
+def simplify_externalRef(elem):
     if elem.name == 'externalRef':
         href = elem.attrs['href']
 
@@ -230,22 +268,21 @@ def simplify_externalRef(elem, idx):
         if 'ns' in elem.attrs and 'ns' not in sub_elem.attrs:
             sub_elem.attrs['ns'] = elem.attrs['ns']
 
-        simplify_whitespace(sub_elem)
-        simplify_datalibrary_add(sub_elem)
-        simplify_datalibrary_remove(sub_elem)
+        simplify_4_2_whitespace(sub_elem)
+        simplify_datalibrary_4_3_add(sub_elem)
+        simplify_datalibrary_4_3_remove(sub_elem)
         simplify_type_value(sub_elem)
         simplify_href(sub_elem)
-        simplify_externalRef(sub_elem, None)
-
-        elem.children[idx] = sub_elem
+        simplify_externalRef(sub_elem)
+        idx = elem.remove()
+        elem.insert_child(idx, sub_elem)
 
     else:
-        for i, child in enumerate(elem.children):
-            if not isinstance(child, text_type):
-                simplify_externalRef(child, i)
+        for child in elem.iter_child_elements():
+            simplify_externalRef(child)
 
 
-def simplify_include(elem, idx):
+def simplify_include(elem):
     if elem.name == 'include':
         href = elem.attrs['href']
 
@@ -259,9 +296,9 @@ def simplify_include(elem, idx):
                 "The document element referred to by and 'include' must be "
                 "'grammar'.")
 
-        simplify_whitespace(sub_elem)
-        simplify_datalibrary_add(sub_elem)
-        simplify_datalibrary_remove(sub_elem)
+        simplify_4_2_whitespace(sub_elem)
+        simplify_datalibrary_4_3_add(sub_elem)
+        simplify_datalibrary_4_3_remove(sub_elem)
         simplify_type_value(sub_elem)
         simplify_href(sub_elem)
         simplify_externalRef(sub_elem, None)
@@ -275,11 +312,9 @@ def simplify_include(elem, idx):
             return False
 
         def remove_start_components(element):
-            children = element.children
-            for i in range(len(children)):
-                child = children[i]
+            for child in list(element.children):
                 if child.name == 'start':
-                    del children[i]
+                    child.remove()
                 elif child.name == 'div':
                     remove_start_components(child)
 
@@ -297,11 +332,9 @@ def simplify_include(elem, idx):
         defines = find_define_components(elem, set())
 
         def remove_define_components(element):
-            children = element.children
-            for i in range(len(children)):
-                child = children[i]
+            for child in list(element.children):
                 if child.name == 'define' and child.attrs['name'] in defines:
-                    del children[i]
+                    child.remove()
                 elif child.name == 'div':
                     remove_define_components(child)
 
@@ -314,9 +347,8 @@ def simplify_include(elem, idx):
         elem.children.insert(0, sub_elem)
 
     else:
-        for i, child in enumerate(elem.children):
-            if not isinstance(child, text_type):
-                simplify_include(child, i)
+        for child in elem.iter_child_elements():
+            simplify_include(child)
 
 
 def simplify_name_attribute(elem):
@@ -332,14 +364,13 @@ def simplify_name_attribute(elem):
             name_elem_attrs['ns'] = ''
 
         name_elem = PrangElement(
-            elem, name_elem_name, elem.namespaces, elem.base_uri,
-            name_elem_attrs, [attr_parts[-1]])
-        elem.children.insert(0, name_elem)
+            name_elem_name, elem.namespaces, elem.base_uri, name_elem_attrs)
+        name_elem.append_child(attr_parts[-1])
+        elem.insert_child(0, name_elem)
         del elem.attrs['name']
 
-    for child in elem.children:
-        if not isinstance(child, text_type):
-            simplify_name_attribute(child)
+    for child in elem.iter_child_elements():
+        simplify_name_attribute(child)
 
 
 def simplify_ns_attribute(elem):
@@ -356,9 +387,8 @@ def simplify_ns_attribute(elem):
 
             el.attrs['ns'] = '' if ns is None else ns
 
-        for child in el.children:
-            if not isinstance(child, text_type):
-                add_ns_attribute(child)
+        for child in el.iter_child_elements():
+            add_ns_attribute(child)
 
     add_ns_attribute(elem)
 
@@ -369,9 +399,8 @@ def simplify_ns_attribute(elem):
                 'ns' in el.attrs:
             del el.attrs['ns']
 
-        for child in el.children:
-            if not isinstance(child, text_type):
-                remove_ns_attribute(child)
+        for child in el.iter_child_elements():
+            remove_ns_attribute(child)
 
     remove_ns_attribute(elem)
 
@@ -382,118 +411,120 @@ def simplify_qnames(elem):
         elem.attrs['ns'] = elem.namespaces[prefix]
         elem.name = local_name
 
-    for child in elem.children:
-        if not isinstance(child, text_type):
-            simplify_qnames(child)
+    for child in elem.iter_child_elements():
+        simplify_qnames(child)
 
 
-def simplify_4_11_div(elem, idx):
-    if elem.name == 'div':
-        for child in elem.children.reverse():
-            elem.parent.insert_child(idx, child)
-        recurse_children = elem.parent.children
+def simplify_4_11_div(el):
+    if el.name == 'div':
+        el_parent = el.parent
+        idx = el.remove()
+        for child in reversed(el.iter_children()):
+            el_parent.insert_child(idx, child)
+        recurse_elem = el_parent
     else:
-        recurse_children = elem.children
+        recurse_elem = el
 
-    for i, child in enumerate(recurse_children):
-        if not isinstance(child, text_type):
-            simplify_4_11_div(child, i)
+    for child in list(recurse_elem.iter_child_elements()):
+        simplify_4_11_div(child)
 
 
-def simplify_4_12_num_children(elem, idx):
-    recurse_elem = elem
-    if elem.name in (
-            'define', 'oneOrMore', 'zeroOrMore', 'optional', 'list',
-            'mixed') and len(elem.children) > 1:
-        group_elem = PrangElement(
-            elem, 'group', elem.namespaces.copy(), elem.base_uri, {}, [])
-
-        for child in elem.children:
-            group_elem.append_child(child)
-
-        elem.children[:] = [group_elem]
-
-    elif elem.name == 'element':
-        if len(elem.children) > 2:
+def simplify_4_12_num_children(root_el):
+    def alter(el):
+        if el.name in (
+                'define', 'oneOrMore', 'zeroOrMore', 'optional', 'list',
+                'mixed') and sum(1 for c in el.iter_children()) > 1:
             group_elem = PrangElement(
-                elem, 'group', elem.namespaces, elem.base_uri, {}, [])
-            for child in elem.children[2:]:
+                'group', el.namespaces.copy(), el.base_uri, {})
+
+            for child in list(el.iter_children()):
                 group_elem.append_child(child)
-            elem.children[2:] = [group_elem]
+            el.append_child(group_elem)
+            return True
 
-    elif elem.name == 'except':
-        if len(elem.children) > 1:
-            choice_elem = PrangElement(
-                elem, 'choice', elem.namespaces, elem.base_uri, {}, [])
-            for child in elem.children[1:]:
-                choice_elem.append_child(child)
-            elem.children[1:] = [choice_elem]
+        elif el.name == 'element':
+            if sum(1 for c in el.iter_children()) > 2:
+                group_elem = PrangElement(
+                    'group', el.namespaces, el.base_uri, {})
+                for child in islice(el.iter_children(), 2):
+                    group_elem.append_child(child)
+                el.append_child(group_elem)
+                return True
 
-    elif elem.name == 'attribute':
-        if len(elem.children) == 1:
-            elem.children.append(
-                PrangElement(
-                    elem, 'text', elem.namespaces, elem.base_uri, {}, []))
+        elif el.name == 'except':
+            if sum(1 for c in el.iter_children()) > 1:
+                choice_elem = PrangElement(
+                    'choice', el.namespaces, el.base_uri, {})
+                for child in islice(el.iter_children(), 1):
+                    choice_elem.append_child(child)
+                el.append_child(choice_elem)
+                return True
 
-    if elem.name in ('choice', 'group', 'interleave'):
-        len_children = len(elem.children)
-        print('elem name', elem.name)
-        print('len children', len_children)
-        if len_children == 1:
-            del elem.parent.children[idx]
-            elem.parent.insert_child(idx, elem.children[0])
-            recurse_elem = elem.parent
-        elif len_children > 2:
-            new_elem = PrangElement(
-                elem, elem.name, elem.namespaces, elem.base_uri, {}, [])
-            for child in elem.children[:-1]:
-                new_elem.append_child(child)
-            elem.children[:-1] = [new_elem]
+        elif el.name == 'attribute':
+            if sum(1 for c in el.iter_children()) == 1:
+                el.append_child(
+                    PrangElement('text', el.namespaces, el.base_uri, {}))
+                return True
 
-    for i, child in recurse_elem.enumerate_child_elements():
-        simplify_4_12_num_children(child, i)
+        elif el.name in ('choice', 'group', 'interleave'):
+            len_children = sum(1 for c in el.iter_children())
+            if len_children == 1:
+                elem_parent = el.parent
+                idx = el.remove()
+                elem_parent.insert_child(idx, list(el.iter_children())[0])
+                return True
+            elif len_children > 2:
+                new_elem = PrangElement(
+                    el.name, el.namespaces, el.base_uri, {})
+                for child in list(el.iter_children())[:-1]:
+                    new_elem.append_child(child)
+                el.insert_child(0, new_elem)
+                return True
+
+        for child in list(el.iter_child_elements()):
+            alter(child)
+
+        return False
+
+    while alter(root_el):
+        pass
 
 
 def simplify_4_13_mixed(elem):
     if elem.name == 'mixed':
         elem.name = 'interleave'
-        elem.children.append(
-            PrangElement(
-                elem, 'text', elem.namespaces.copy(), elem.base_uri, {}, []))
-    for child in elem.children:
-        if not isinstance(child, text_type):
-            simplify_4_13_mixed(child)
+        elem.append_child(
+            PrangElement('text', elem.namespaces.copy(), elem.base_uri, {}))
+    for child in elem.iter_child_elements():
+        simplify_4_13_mixed(child)
 
 
 def simplify_4_14_optional(elem):
     if elem.name == 'optional':
         elem.name = 'choice'
-        elem.children.append(
-            PrangElement(
-                elem, 'empty', elem.namespaces.copy(), elem.base_uri, {}, []))
-    for child in elem.children:
-        if not isinstance(child, text_type):
-            simplify_4_14_optional(child)
+        elem.append_child(
+            PrangElement('empty', elem.namespaces.copy(), elem.base_uri, {}))
+    for child in elem.iter_child_elements():
+        simplify_4_14_optional(child)
 
 
 def simplify_4_15_zero_or_more(elem):
     if elem.name == 'zeroOrMore':
         elem.name = 'choice'
         one_or_more_elem = PrangElement(
-            elem, 'oneOrMore', elem.namespaces.copy(), elem.base_uri, {}, [])
-        for child in elem.children:
+            'oneOrMore', elem.namespaces.copy(), elem.base_uri, {})
+        for child in elem.iter_children():
             one_or_more_elem.append_child(child)
-        elem.children[:] = [
-            one_or_more_elem, PrangElement(
-                elem, 'empty', elem.namespaces.copy(), elem.base_uri, {}, [])]
+        elem.append_child(one_or_more_elem)
+        elem.append_child(
+            PrangElement('empty', elem.namespaces.copy(), elem.base_uri, {}))
 
-    for child in elem.children:
-        if not isinstance(child, text_type):
-            simplify_4_15_zero_or_more(child)
+    for child in elem.iter_child_elements():
+        simplify_4_15_zero_or_more(child)
 
 
 def find_descendent(elem, names):
-    for child in elem.children:
+    for child in elem.iter_child_elements():
         if child.name in names:
             return child
         else:
@@ -503,7 +534,7 @@ def find_descendent(elem, names):
     return None
 
 
-def simplify_4_16_constraints(elem, i):
+def simplify_4_16_constraints(elem):
     if elem.name == 'except':
         if elem.parent.name == 'anyName' and \
                 find_descendent(elem, ('anyName',)) is not None:
@@ -516,8 +547,8 @@ def simplify_4_16_constraints(elem, i):
                 "An except element that is a child of an nsName element must "
                 "not have any nsName or anyName descendant elements.")
 
-    if elem.name == 'attribute' and len(elem.children) > 0:
-        first_child = elem.children[0]
+    if elem.name == 'attribute' and sum(1 for c in elem.iter_children()) > 0:
+        first_child = list(elem.iter_children())[0]
         if first_child.name == 'name':
             found_elem = first_child
         else:
@@ -525,7 +556,7 @@ def simplify_4_16_constraints(elem, i):
 
         if found_elem is not None and \
                 found_elem.attrs.get('ns', None) == '' and \
-                '.'.join(found_elem.children).strip() == 'xmlns':
+                '.'.join(found_elem.iter_children()).strip() == 'xmlns':
 
             raise Exception(
                 "A name element that occurs as the first child of an "
@@ -549,16 +580,14 @@ def simplify_4_16_constraints(elem, i):
                 "of an attribute element must not have an ns attribute with "
                 "value http://www.w3.org/2000/xmlns.")
 
-    for i, child in enumerate(elem.children):
-        if not isinstance(child, text_type):
-            simplify_4_16_constraints(child, i)
+    for child in elem.iter_child_elements():
+        simplify_4_16_constraints(child)
 
 
-def simplify_4_17_combine(elem, i):
+def simplify_4_17_combine(elem):
     if elem.name == 'grammar':
         combs = {'define': {}, 'start': {}}
-        to_delete = []
-        for i, child in enumerate(elem.children):
+        for child in list(elem.iter_children()):
             if child.name in combs:
                 comb_names = combs[child.name]
                 if child.name == 'define':
@@ -566,41 +595,36 @@ def simplify_4_17_combine(elem, i):
                 else:
                     comb_name = ''
                 if comb_name in comb_names:
-                    comb_idx, comb_child = comb_names[comb_name]
+                    comb_child = comb_names[comb_name]
                     if 'combine' in comb_child.attrs:
                         comb_elem_name = comb_child.attrs['combine']
                     else:
                         comb_elem_name = child.attrs['combine']
                     comb_elem = PrangElement(
-                        comb_child, comb_elem_name, elem.namespaces.copy(),
-                        elem.base_uri, {}, [])
+                        comb_elem_name, elem.namespaces.copy(), elem.base_uri,
+                        {})
 
-                    for j in range(len(comb_child.children)):
-                        comb_elem.append_child(comb_child.children[j])
-                        del comb_child.children[j]
-
-                    for j in range(len(child.children)):
-                        comb_elem.append_child(child.children[j])
+                    for c in list(
+                            chain(
+                                comb_child.iter_children(),
+                                child.iter_children())):
+                        comb_elem.append_child(c)
 
                     comb_child.append_child(comb_elem)
-                    to_delete.append(i)
+                    child.remove()
                 else:
-                    comb_names[comb_name] = (i, child)
+                    comb_names[comb_name] = child
 
         for cat in combs.keys():
-            for comb_idx, comb_child in combs[cat].values():
+            for comb_child in combs[cat].values():
                 if 'combine' in comb_child.attrs:
                     del comb_child.attrs['combine']
 
-        for idx in sorted(to_delete, reverse=True):
-            del elem.children[idx]
-
-    for i, child in enumerate(elem.children):
-        if not isinstance(child, text_type):
-            simplify_4_17_combine(child, i)
+    for child in elem.iter_child_elements():
+        simplify_4_17_combine(child)
 
 
-def simplify_4_18_grammar(elem, i):
+def simplify_4_18_grammar(elem):
     if elem.parent is None and elem.name != 'grammar':
         pattern_name = elem.name
         pattern_namespaces = elem.namespaces
@@ -629,19 +653,19 @@ def simplify_4_18_grammar(elem, i):
         names = set()
         dups = []
 
-        def find_defs(el, i):
+        def find_defs(el):
             if el.name == 'define':
                 def_name = el.attrs['name']
                 if def_name in names:
-                    dups.append(el, i)
+                    dups.append(el)
                 else:
                     names.add(def_name)
-            for j, c in el.enumerate_child_elements():
-                find_defs(c, j)
+            for c in el.iter_child_elements():
+                find_defs(c)
 
-        find_defs(elem, None)
+        find_defs(elem)
 
-        for dup_el, dup_idx in dups:
+        for dup_el in dups:
             dup_name = dup_el.name
             new_name = dup_name
             while new_name in names:
@@ -651,7 +675,7 @@ def simplify_4_18_grammar(elem, i):
 
             grammar_count = 0
 
-            def find_refs(el, i):
+            def find_refs(el):
                 global grammar_count
                 if grammar_count == 0:
                     if el.name == 'ref' and el.attr['name'] == dup_name:
@@ -664,37 +688,44 @@ def simplify_4_18_grammar(elem, i):
                 if el.name == 'grammar':
                     grammar_count += 1
 
-                for j, c in el.enumerate_child_elements():
-                    find_refs(c, j)
-            find_refs(dup_el, dup_idx)
+                for c in el.iter_child_elements():
+                    find_refs(c)
+            find_refs(dup_el)
             elem.append_child(dup_el)
 
-        def handle_refs(el, i):
+        def handle_refs(el):
             if el.name == 'parentRef':
                 el.name = 'ref'
             elif el.name == 'grammar' and el.parent is not None:
-                del el.parent.children[i]
+                i = el.remove()
                 el.parent.insert_child(i, el.children[0])
 
-            for j, c in el.enumerate_child_elements():
-                handle_refs(c, j)
+            for c in [el.iter_child_elements()]:
+                handle_refs(c)
 
-    for i, child in elem.enumerate_child_elements():
-        simplify_4_18_grammar(child, i)
+    for c in elem.iter_child_elements():
+        simplify_4_18_grammar(c)
+
+
+def find_nameless_elements(el):
+    if el.name == 'element' and 'name' not in el.attrs:
+        print(el)
+        raise Exception("Nameless element!")
+    for child in el.iter_child_elements():
+        find_nameless_elements(child)
 
 
 def simplify_4_19_define_ref(grammar_el):
     refs = set()
     defs = set()
 
-    def find_defs_refs(i, elem):
+    def find_defs_refs(elem):
         if elem.name == 'ref':
             refs.add(elem)
         elif elem.name == 'define':
-            defs.append((i, elem))
-        for i, child in enumerate(reversed(elem.children)):
-            if isinstance(child, PrangElement):
-                find_defs_refs(i, child)
+            defs.add(elem)
+        for child in reversed(list(elem.iter_child_elements())):
+            find_defs_refs(child)
 
     find_defs_refs(grammar_el)
 
@@ -717,37 +748,43 @@ def simplify_4_19_define_ref(grammar_el):
                 parent = parent.parent
 
     # Remove unreachable defines
-    for i, elem in defs:
+    for elem in set(defs):
         if elem.attrs['name'] not in reachable:
-            del elem.parent.children[i]
-            defs.remove((i, elem))
+            elem.remove()
+            defs.remove(elem)
 
-    def find_elements(i, el):
+    def find_elements(el):
         if el.name == 'element' and el.parent.name != 'define':
-            def_name = el.attrs['name']
-            while def_name not in reachable:
+            def_name = 'c'
+            while def_name in reachable:
                 def_name += '_c'
             reachable.add(def_name)
-            ref_el = PrangElement(el.parent, 'ref', [], {'name': def_name})
-            del el.parent.children[i]
-            el.parent.insert_child(i, ref_el)
-            def_el = PrangElement(grammar_el, 'define', [], {'name': def_name})
+            ref_el = PrangElement(
+                'ref', el.parent.base_uri, el.parent.namespaces.copy(),
+                {'name': def_name})
+            el_parent = el.parent
+            idx = el.remove()
+            el_parent.insert_child(idx, ref_el)
+            def_el = PrangElement(
+                'define', grammar_el.base_uri, grammar_el.namespaces.copy(),
+                {'name': def_name})
             grammar_el.append_child(def_el)
             def_el.append_child(el)
 
-        for j, child in el.enumerate_child_elements():
-            find_elements(j, child)
+        for child in el.iter_child_elements():
+            find_elements(child)
 
-    find_elements(None, grammar_el)
+    find_elements(grammar_el)
 
     # Expandable refs
     defs = {}
-    for i, child in enumerate(grammar_el.children):
+    for child in grammar_el.iter_children():
         if child.name == 'define':
-            if sum(1 for c in child.iter_child_elements('element')) > 0:
-                defs[child.attrs['name']] = (i, child)
+            if sum(1 for c in child.iter_child_elements('element')) == 0:
+                defs[child.attrs['name']] = child
 
-    def find_expandable_refs(i, el):
+    def find_expandable_refs(subs, el):
+        to_recurse = None
         if el.name == 'ref':
             has_anc = False
             parent = el.parent
@@ -756,36 +793,136 @@ def simplify_4_19_define_ref(grammar_el):
                     has_anc = True
                 parent = parent.parent
             ref_name = el.attrs['name']
-            if has_anc and ref_name in defs:
-                for child in defs[ref_name].children:
-                    el.append_child(child)
-        for j, child in el.enumerate_child_elements():
-            find_expandable_refs(j, child)
+            if has_anc and ref_name in defs and ref_name not in subs:
+                subs = subs.copy()
+                subs.add(ref_name)
+                el_parent = el.parent
+                idx = el.remove()
+                to_recurse = []
+                for c in defs[ref_name].iter_children():
+                    el_parent.insert_child(idx, c)
+                    to_recurse.append(c)
 
-    find_expandable_refs(None, grammar_el)
+        if to_recurse is None:
+            to_recurse = list(el.iter_child_elements())
+
+        for child in to_recurse:
+            find_expandable_refs(subs, child)
+
+    find_expandable_refs(set(), grammar_el)
 
     # Remove expandable defs
-    for i, el in defs.values():
-        del el.parent.children[i]
+    for el in defs.values():
+        el.remove()
+
+
+def simplify_4_20_not_allowed(grammar_el):
+
+    def not_allowed_elems(el):
+        if el.name in (
+                'attribute', 'list', 'group', 'interleave', 'oneOrMore') and \
+                sum(
+                    1 for c in el.iter_child_elements()
+                    if c.name == 'notAllowed') > 0:
+
+            for c in list(el.iter_children()):
+                c.remove()
+
+            el.name = 'notAllowed'
+            el.attrs.clear()
+        elif el.name == 'choice':
+            num_not_alloweds = sum(
+                1 for c in el.iter_child_elements() if c.name == 'notAllowed')
+            if num_not_alloweds == 2:
+                for c in list(el.iter_children()):
+                    c.remove()
+                el.name = 'notAllowed'
+                el.attrs.clear()
+            elif num_not_alloweds == 1:
+                allowed = None
+                for c in list(el.iter_children()):
+                    c.remove()
+                    if c.name != 'notAllowed':
+                        allowed = c
+                el.name = allowed.name
+                el.attrs.clear()
+                el.attrs.update(allowed.attrs)
+                for c in allowed.iter_children():
+                    el.append_child(c)
+        elif el.name == 'except' and sum(
+                1 for c in el.iter_child_elements()
+                if c.name == 'notAllowed') > 0:
+            for c in list(el.iter_children()):
+                c.remove()
+
+            el.name = 'notAllowed'
+            el.attrs.clear()
+
+        for child in el.iter_child_elements():
+            not_allowed_elems(child)
+
+    not_allowed_elems(grammar_el)
+
+    refs = set()
+    defs = set()
+
+    def find_defs_refs(elem):
+        if elem.name == 'ref':
+            refs.add(elem)
+        elif elem.name == 'define':
+            defs.add(elem)
+        for child in elem.iter_child_elements():
+            find_defs_refs(child)
+
+    find_defs_refs(grammar_el)
+
+    # Find names of reachable defines
+    reachable = set()
+
+    reachable_found = True
+    while reachable_found:
+        reachable_found = False
+        for elem in list(refs):
+            parent = elem.parent
+            parents = set()
+            while parent is not None and not reachable_found:
+                if parent in parents:
+                    print(parent.name)
+                    raise Exception("parent in parents!")
+                else:
+                    parents.add(parent)
+                if parent.name == 'start' or (
+                        parent.name == 'define' and
+                        parent.attrs['name'] in reachable):
+                    reachable.add(elem.attrs['name'])
+                    refs.remove(elem)
+                    reachable_found = True
+                parent = parent.parent
+
+    # Remove unreachable defines
+    for elem in defs:
+        if elem.attrs['name'] not in reachable:
+            elem.remove()
 
 
 def simplify(schema_elem):
-    simplify_whitespace(schema_elem)
-    simplify_datalibrary_add(schema_elem)
-    simplify_datalibrary_remove(schema_elem)
+    simplify_4_2_whitespace(schema_elem)
+    simplify_datalibrary_4_3_add(schema_elem)
+    simplify_datalibrary_4_3_remove(schema_elem)
     simplify_type_value(schema_elem)
     simplify_href(schema_elem)
-    simplify_externalRef(schema_elem, None)
-    simplify_include(schema_elem, None)
+    simplify_externalRef(schema_elem)
+    simplify_include(schema_elem)
     simplify_name_attribute(schema_elem)
     simplify_ns_attribute(schema_elem)
     simplify_qnames(schema_elem)
-    simplify_4_11_div(schema_elem, None)
-    simplify_4_12_num_children(schema_elem, None)
+    simplify_4_11_div(schema_elem)
+    simplify_4_12_num_children(schema_elem)
     simplify_4_13_mixed(schema_elem)
     simplify_4_14_optional(schema_elem)
     simplify_4_15_zero_or_more(schema_elem)
-    simplify_4_16_constraints(schema_elem, None)
-    simplify_4_17_combine(schema_elem, None)
-    simplify_4_18_grammar(schema_elem, None)
+    simplify_4_16_constraints(schema_elem)
+    simplify_4_17_combine(schema_elem)
+    simplify_4_18_grammar(schema_elem)
     simplify_4_19_define_ref(schema_elem)
+    simplify_4_20_not_allowed(schema_elem)

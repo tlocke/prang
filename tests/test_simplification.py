@@ -2,7 +2,8 @@ import prang
 import xml.dom.minidom
 
 
-def compare_simplify(func, input_schema, desired_simplified_schema_str, *args):
+def compare_simplify(
+        func, input_schema, desired_simplified_schema_str, *args):
     schema_dom = xml.dom.minidom.parseString(input_schema)
     schema_elem = prang.to_prang_elem(None, schema_dom.documentElement)
     func(*([schema_elem] + list(args)))
@@ -11,6 +12,7 @@ def compare_simplify(func, input_schema, desired_simplified_schema_str, *args):
         print(simplified_schema_str)
         print(desired_simplified_schema_str)
     assert simplified_schema_str == desired_simplified_schema_str
+
 
 '''
 def test_simplification():
@@ -105,20 +107,17 @@ def test_4_11_div():
 <element
     name="addressBook"
     xmlns="http://relaxng.org/ns/structure/1.0">
-  <div>
-    <element
-        name="email">
-      <text/>
-    </element>
-    <element
-        name="name">
-      <text/>
-    </element>
-  </div>
+  <element
+      name="email">
+    <text/>
+  </element>
+  <element
+      name="name">
+    <text/>
+  </element>
 </element>
 """
-    compare_simplify(
-        prang.simplify_4_12_num_children, schema_str, desired_schema_str, None)
+    compare_simplify(prang.simplify_4_11_div, schema_str, desired_schema_str)
 
 
 def test_4_12_num_children():
@@ -163,7 +162,7 @@ def test_4_12_num_children():
 </element>
 """
     compare_simplify(
-        prang.simplify_4_12_num_children, schema_str, desired_schema_str, None)
+        prang.simplify_4_12_num_children, schema_str, desired_schema_str)
 
 
 def test_4_13_mixed():
@@ -305,8 +304,7 @@ def test_4_17_combine():
 </grammar>
 """
     compare_simplify(
-        prang.simplify_4_17_combine, schema_str, desired_schema_str, None)
-
+        prang.simplify_4_17_combine, schema_str, desired_schema_str)
 
 '''
 def test_4_18_grammar():
@@ -344,10 +342,10 @@ def test_4_18_grammar():
             '<define name="inline.class" combine="choice">',
             '<choice>',
             '<element name="code">',
-            '<ref name="inline">',
+            '<ref name="inline"/>',
             '</element>',
             '<element name="em">',
-            '<ref name="inline">',
+            '<ref name="inline"/>',
             '</element>',
             '</choice>',
             '</define>',
@@ -356,44 +354,69 @@ def test_4_18_grammar():
     desired_schema_str = """<?xml version="1.0"?>
 <grammar>
   <grammar>
-    <define name="inline">
+    <define
+        name="inline">
       <zeroOrMore>
-        <ref name="inline.class"/>
+        <ref
+            name="inline.class"/>
       </zeroOrMore>
     </define>
-    <define name="inline.class">
+    <define
+        name="inline.class">
       <choice>
         <text/>
-        <element name="bold">
-          <ref name="inline"/>
+        <element
+            name="bold">
+          <ref
+              name="inline"/>
         </element>
-        <element name="italic">
-          <ref name="inline"/>
+        <element
+            name="italic">
+          <ref
+              name="inline"/>
         </element>
       </choice>
     </define>
   </grammar>
   <start>
-    <element name="doc">
+    <element
+        name="doc">
       <zeroOrMore>
-        <element name="p">
-          <ref name="inline"/>',
+        <element
+            name="p">
+          <ref
+              name="inline"/>
         </element>
       </zeroOrMore>
     </element>
   </start>
-  <define name="inline.class" combine="choice">
+  <define
+      name="inline.class"
+      combine="choice">
     <choice>
-      <element name="code">
-        <ref name="inline">
+      <element
+          name="code">
+        <ref
+            name="inline"/>
       </element>
-      <element name="em">
-        <ref name="inline">
+      <element
+          name="em">
+        <ref
+            name="inline"/>
       </element>
     </choice>
   </define>
 </grammar>
 """
     compare_simplify(
-        prang.simplify_4_17_combine, schema_str, desired_schema_str, None)
+        prang.simplify_4_18_grammar, schema_str, desired_schema_str)
+
 '''
+
+
+def test_odf_1_2():
+    schema_str = ''.join(
+        open('/home/tlocke/prang/tests/odf_1_2.rng').readlines())
+    schema_dom = xml.dom.minidom.parseString(schema_str)
+    schema_elem = prang.to_prang_elem(None, schema_dom.documentElement)
+    prang.simplify(schema_elem)
