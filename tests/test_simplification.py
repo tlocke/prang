@@ -164,6 +164,31 @@ def test_4_12_num_children():
     compare_simplify(
         prang.simplify_4_12_num_children, schema_str, desired_schema_str)
 
+    schema_str = ''.join(
+        [
+            '<?xml version="1.0"?>',
+            '<element name="addressBook" ',
+            'xmlns="http://relaxng.org/ns/structure/1.0">',
+            '<choice>',
+            '<element name="email">',
+            '<text/>',
+            '</element>',
+            '</choice>',
+            '</element>'])
+
+    desired_schema_str = """<?xml version="1.0"?>
+<element
+    name="addressBook"
+    xmlns="http://relaxng.org/ns/structure/1.0">
+  <element
+      name="email">
+    <text/>
+  </element>
+</element>
+"""
+    compare_simplify(
+        prang.simplify_4_12_num_children, schema_str, desired_schema_str)
+
 
 def test_4_13_mixed():
     schema_str = """<?xml version="1.0"?>
@@ -306,6 +331,7 @@ def test_4_17_combine():
     compare_simplify(
         prang.simplify_4_17_combine, schema_str, desired_schema_str)
 
+
 '''
 def test_4_18_grammar():
     schema_str = ''.join(
@@ -410,8 +436,267 @@ def test_4_18_grammar():
 """
     compare_simplify(
         prang.simplify_4_18_grammar, schema_str, desired_schema_str)
-
 '''
+
+
+def test_4_19_define_ref():
+    schema_str = ''.join(
+        [
+            '<?xml version="1.0"?>',
+            '<grammar>',
+            '<start>',
+            '<element name="name">',
+            '<text/>'
+            '</element>',
+            '</start>',
+            '</grammar>'])
+
+    desired_schema_str = """<?xml version="1.0"?>
+<grammar>
+  <start>
+    <ref
+        name="c"/>
+  </start>
+  <define
+      name="c">
+    <element
+        name="name">
+      <text/>
+    </element>
+  </define>
+</grammar>
+"""
+    compare_simplify(
+        prang.simplify_4_19_define_ref, schema_str, desired_schema_str)
+
+    schema_str = ''.join(
+        [
+            '<?xml version="1.0"?>',
+            '<grammar>',
+            '<start>',
+            '<ref name="c"/>',
+            '</start>',
+            '<define name="c">',
+            '<choice>',
+            '<element name="first_name">',
+            '<text/>'
+            '</element>',
+            '<element name="last_name">',
+            '<text/>'
+            '</element>',
+            '</choice>',
+            '</define>',
+            '</grammar>'])
+
+    desired_schema_str = """<?xml version="1.0"?>
+<grammar>
+  <start>
+    <choice>
+      <ref
+          name="c_c"/>
+      <ref
+          name="c_c_c"/>
+    </choice>
+  </start>
+  <define
+      name="c_c">
+    <element
+        name="first_name">
+      <text/>
+    </element>
+  </define>
+  <define
+      name="c_c_c">
+    <element
+        name="last_name">
+      <text/>
+    </element>
+  </define>
+</grammar>
+"""
+    compare_simplify(
+        prang.simplify_4_19_define_ref, schema_str, desired_schema_str)
+
+    schema_str = ''.join(
+        [
+            '<?xml version="1.0"?>',
+            '<grammar>',
+            '<start>',
+            '<element name="first_name">',
+            '<ref name="zathustra"/>',
+            '</element>',
+            '</start>',
+            '<define name="zathustra">',
+            '<choice>'
+            '<ref name="c"/>'
+            '<text/>',
+            '</choice>',
+            '</define>',
+            '<define name="c">',
+            '<choice>',
+            '<empty/>',
+            '<text/>',
+            '</choice>',
+            '</define>',
+            '</grammar>'])
+
+    desired_schema_str = """<?xml version="1.0"?>
+<grammar>
+  <start>
+    <ref
+        name="c_c"/>
+  </start>
+  <define
+      name="c_c">
+    <element
+        name="first_name">
+      <choice>
+        <choice>
+          <empty/>
+          <text/>
+        </choice>
+        <text/>
+      </choice>
+    </element>
+  </define>
+</grammar>
+"""
+    compare_simplify(
+        prang.simplify_4_19_define_ref, schema_str, desired_schema_str)
+    '''
+    schema_str = ''.join(
+        [
+            '<?xml version="1.0"?>',
+            '<grammar>',
+            '<start>',
+            '<ref name="styleNameRef"/>',
+            '<ref name="text-list"/>',
+            '</start>',
+            '<define name="text-list">',
+            '<element>',
+            '<ref name="text-list-attr"/>',
+            '<choice>',
+            '<oneOrMore>',
+            '<ref name="text-list-item"/>',
+            '</oneOrMore>',
+            '<empty/>',
+            '</choice>',
+            '<group>',
+            '<name ns="urn:oasis:names:tc:opendocument:xmlns:text:1.0">',
+            'list',
+            '</name>',
+            '<choice>',
+            '<ref name="text-list-header"/>',
+            '<empty/>',
+            '</choice>',
+            '</group>',
+            '</element>',
+            '</define>',
+            '<define name="text-list-attr">',
+            '<interleave>',
+            '<interleave>'
+            '<choice>',
+            '<attribute>',
+            '<name ns="urn:oasis:names:tc:opendocument:xmlns:text:1.0">',
+            'style-name',
+            '</name>'
+            '<ref name="styleNameRef"/>',
+            '</attribute>',
+            '<empty/>',
+            '</choice>',
+            '<choice>',
+            '<attribute>',
+            '<name ns="urn:oasis:names:tc:opendocument:xmlns:text:1.0">',
+            'continue-numbering',
+            '</name>',
+            '<ref name="boolean"/>',
+            '</attribute>',
+            '<empty/>',
+            '</choice>',
+            '<choice>',
+            '<attribute>',
+            '<name ns="urn:oasis:names:tc:opendocument:xmlns:text:1.0">',
+            'continue-list',
+            '</name>',
+            '<ref name="IDREF"/>',
+            '</attribute>',
+            '<empty/>',
+            '</choice>',
+            '</interleave>',
+            '<choice>'
+            '<ref name="xml-id"/>'
+            '<empty/>',
+            '</choice>',
+            '</interleave>',
+            '</define>',
+            '<define name="styleNameRef">',
+            '<choice>',
+            '<data ',
+            'datatypeLibrary="http://www.w3.org/2001/XMLSchema-datatypes" ',
+            'type="NCName"/>',
+            '<empty/>',
+            '</choice>',
+            '</define>',
+            '</grammar>'])
+
+    desired_schema_str = """<?xml version="1.0"?>
+<grammar>
+  <start>
+    <element name="first_name">
+      <choice>
+        <choice>
+          <empty/>
+          <text/>
+        </choice>
+        <text/>
+      </choice>
+    </element>
+  </start>
+</grammar>
+"""
+    '''
+    schema_str = ''.join(
+        [
+            '<?xml version="1.0"?>',
+            '<grammar>',
+            '<start>',
+            '<ref name="styleNameRef"/>',
+            '<ref name="text-list"/>',
+            '</start>',
+            '<define name="text-list">',
+            '<element name="eagle">',
+            '<ref name="styleNameRef"/>',
+            '</element>',
+            '</define>',
+            '<define name="styleNameRef">',
+            '<data ',
+            'datatypeLibrary="http://www.w3.org/2001/XMLSchema-datatypes" ',
+            'type="NCName"/>',
+            '</define>',
+            '</grammar>'])
+
+    desired_schema_str = """<?xml version="1.0"?>
+<grammar>
+  <start>
+    <data
+        datatypeLibrary="http://www.w3.org/2001/XMLSchema-datatypes"
+        type="NCName"/>
+    <ref
+        name="text-list"/>
+  </start>
+  <define
+      name="text-list">
+    <element
+        name="eagle">
+      <data
+          datatypeLibrary="http://www.w3.org/2001/XMLSchema-datatypes"
+          type="NCName"/>
+    </element>
+  </define>
+</grammar>
+"""
+    compare_simplify(
+        prang.simplify_4_19_define_ref, schema_str, desired_schema_str)
 
 
 def test_odf_1_2():
