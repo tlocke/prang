@@ -3,11 +3,12 @@ import xml.dom.minidom
 
 
 def compare_simplify(
-        func, input_schema, desired_simplified_schema_str, *args):
-    schema_dom = xml.dom.minidom.parseString(input_schema)
-    schema_elem = prang.to_prang_elem(None, schema_dom.documentElement)
-    func(*([schema_elem] + list(args)))
-    simplified_schema_str = str(schema_elem)
+        func, input_schema_str, desired_simplified_schema_str, *args):
+    input_schema_dom = xml.dom.minidom.parseString(input_schema_str)
+    input_schema_el = prang.to_prang_elem(
+        None, input_schema_dom.documentElement)
+    func(*([input_schema_el] + list(args)))
+    simplified_schema_str = str(input_schema_el)
     if simplified_schema_str != desired_simplified_schema_str:
         print(simplified_schema_str)
         print(desired_simplified_schema_str)
@@ -184,6 +185,43 @@ def test_4_12_num_children():
       name="email">
     <text/>
   </element>
+</element>
+"""
+    compare_simplify(
+        prang.simplify_4_12_num_children, schema_str, desired_schema_str)
+
+    schema_str = ''.join(
+        [
+            '<?xml version="1.0"?>',
+            '<element name="addressBook" ',
+            'xmlns="http://relaxng.org/ns/structure/1.0">',
+            '<attribute>',
+            '<anyName>',
+            '<except>',
+            '<nsName ns="http://relaxng.org/ns/structure/1.0"/>',
+            '<nsName ns=""/>',
+            '</except>',
+            '</anyName>'
+            '</attribute>',
+            '</element>'])
+
+    desired_schema_str = """<?xml version="1.0"?>
+<element
+    name="addressBook"
+    xmlns="http://relaxng.org/ns/structure/1.0">
+  <attribute>
+    <anyName>
+      <except>
+        <choice>
+          <nsName
+              ns="http://relaxng.org/ns/structure/1.0"/>
+          <nsName
+              ns=""/>
+        </choice>
+      </except>
+    </anyName>
+    <text/>
+  </attribute>
 </element>
 """
     compare_simplify(

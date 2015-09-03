@@ -1,6 +1,8 @@
+import pkgutil
 import copy
 from six import text_type, iteritems
 import xml.dom
+import xml.dom.minidom
 import binascii
 import urllib.parse
 import requests
@@ -128,11 +130,6 @@ class PrangElement():
     def iter_children(self):
         return self._children
 
-    '''
-    def check_integrity(self):
-        for
-    '''
-
 NATIVE_NAMESPACES = (
     None, 'http://relaxng.org/ns/structure/1.0',
     'http://www.w3.org/2000/xmlns', 'http://www.w3.org/XML/1998/namespace')
@@ -142,7 +139,8 @@ def to_prang_elem(parent, elem_dom):
     elem_dom.normalize()
 
     if parent is None:
-        namespaces = {'': '', 'xml': 'http://www.w3.org/XML/1998/namespace'}
+        namespaces = {
+            '': '', 'xml': 'http://www.w3.org/XML/1998/namespace'}
         base_uri = ''
     else:
         namespaces = parent.namespaces.copy()
@@ -175,18 +173,6 @@ def to_prang_elem(parent, elem_dom):
             elem.append_child(child.data)
 
     return elem
-
-
-def is_valid(schema, doc):
-    if isinstance(schema, text_type):
-        schema_dom = xml.dom.minidom.parseString(schema)
-    if isinstance(doc, text_type):
-        pass
-        # doc_dom = xml.dom.minidom.parseString(doc)
-
-    schema_elem = to_prang_elem(
-        schema_dom.getDocumentElement())
-    schema_dom = simplify(schema_elem)
 
 
 def simplify_4_2_whitespace(elem):
@@ -241,7 +227,8 @@ def simplify_datalibrary_4_3_add(elem):
 
 
 def simplify_datalibrary_4_3_remove(elem):
-    if elem.name not in ('data', 'value') and 'datatypeLibrary' in elem.attrs:
+    if elem.name not in ('data', 'value') and \
+            'datatypeLibrary' in elem.attrs:
         del elem.attrs['datatypeLibrary']
 
     for child in elem.iter_child_elems():
@@ -307,13 +294,13 @@ def simplify_include(elem):
                 "The document element referred to by and 'include' must be "
                 "'grammar'.")
 
-        simplify_4_2_whitespace(sub_elem)
-        simplify_datalibrary_4_3_add(sub_elem)
-        simplify_datalibrary_4_3_remove(sub_elem)
-        simplify_type_value(sub_elem)
-        simplify_href(sub_elem)
-        simplify_externalRef(sub_elem, None)
-        simplify_include(sub_elem, None)
+        Schema.simplify_4_2_whitespace(sub_elem)
+        Schema.simplify_datalibrary_4_3_add(sub_elem)
+        Schema.simplify_datalibrary_4_3_remove(sub_elem)
+        Schema.simplify_type_value(sub_elem)
+        Schema.simplify_href(sub_elem)
+        Schema.simplify_externalRef(sub_elem, None)
+        Schema.simplify_include(sub_elem, None)
 
         def has_start_component(element):
             for child in element.children:
@@ -344,7 +331,8 @@ def simplify_include(elem):
 
         def remove_define_components(element):
             for child in list(element.children):
-                if child.name == 'define' and child.attrs['name'] in defines:
+                if child.name == 'define' and \
+                        child.attrs['name'] in defines:
                     child.remove()
                 elif child.name == 'div':
                     remove_define_components(child)
@@ -375,7 +363,8 @@ def simplify_name_attribute(elem):
             name_elem_attrs['ns'] = ''
 
         name_elem = PrangElement(
-            name_elem_name, elem.namespaces, elem.base_uri, name_elem_attrs)
+            name_elem_name, elem.namespaces, elem.base_uri,
+            name_elem_attrs)
         name_elem.append_child(attr_parts[-1])
         elem.insert_child(0, name_elem)
         del elem.attrs['name']
@@ -466,7 +455,7 @@ def simplify_4_12_num_children(el):
         if sum(1 for c in el.iter_children()) > 1:
             choice_elem = PrangElement(
                 'choice', el.namespaces, el.base_uri, {})
-            for child in islice(el.iter_children(), 1):
+            for child in list(el.iter_children()):
                 choice_elem.append_child(child)
             el.append_child(choice_elem)
 
@@ -502,7 +491,8 @@ def simplify_4_14_optional(elem):
     if elem.name == 'optional':
         elem.name = 'choice'
         elem.append_child(
-            PrangElement('empty', elem.namespaces.copy(), elem.base_uri, {}))
+            PrangElement(
+                'empty', elem.namespaces.copy(), elem.base_uri, {}))
     for child in elem.iter_child_elems():
         simplify_4_14_optional(child)
 
@@ -516,7 +506,8 @@ def simplify_4_15_zero_or_more(elem):
             one_or_more_elem.append_child(child)
         elem.append_child(one_or_more_elem)
         elem.append_child(
-            PrangElement('empty', elem.namespaces.copy(), elem.base_uri, {}))
+            PrangElement(
+                'empty', elem.namespaces.copy(), elem.base_uri, {}))
 
     for child in elem.iter_child_elems():
         simplify_4_15_zero_or_more(child)
@@ -538,15 +529,16 @@ def simplify_4_16_constraints(elem):
         if elem.parent.name == 'anyName' and \
                 find_descendent(elem, ('anyName',)) is not None:
             raise Exception(
-                "An except element that is a child of an anyName element must "
-                "not have any anyName descendant elements.")
+                "An except element that is a child of an anyName element "
+                "must not have any anyName descendant elements.")
         if elem.parent.name == 'nsName' and \
                 find_descendent(elem, ('nsName', 'anyName')) is not None:
             raise Exception(
-                "An except element that is a child of an nsName element must "
-                "not have any nsName or anyName descendant elements.")
+                "An except element that is a child of an nsName element "
+                "must not have any nsName or anyName descendant elements.")
 
-    if elem.name == 'attribute' and sum(1 for c in elem.iter_children()) > 0:
+    if elem.name == 'attribute' and \
+            sum(1 for c in elem.iter_children()) > 0:
         first_child = list(elem.iter_children())[0]
         if first_child.name == 'name':
             found_elem = first_child
@@ -559,10 +551,10 @@ def simplify_4_16_constraints(elem):
 
             raise Exception(
                 "A name element that occurs as the first child of an "
-                "attribute element or as the descendant of the first child of "
-                "an attribute element and that has an ns attribute with value "
-                "equal to the empty string must not have content equal to "
-                "xmlns.")
+                "attribute element or as the descendant of the first "
+                "child of an attribute element and that has an ns "
+                "attribute with value equal to the empty string must not "
+                "have content equal to xmlns.")
 
         if first_child.name in ('name', 'nsName'):
             found_elem = first_child
@@ -574,10 +566,10 @@ def simplify_4_16_constraints(elem):
                 'http://www.w3.org/2000/xmlns':
 
             raise Exception(
-                "A name or nsName element that occurs as the first child of "
-                "an attribute element or as the descendant of the first child "
-                "of an attribute element must not have an ns attribute with "
-                "value http://www.w3.org/2000/xmlns.")
+                "A name or nsName element that occurs as the first child "
+                "of an attribute element or as the descendant of the "
+                "first child of an attribute element must not have an ns "
+                "attribute with value http://www.w3.org/2000/xmlns.")
 
     for child in elem.iter_child_elems():
         simplify_4_16_constraints(child)
@@ -600,8 +592,8 @@ def simplify_4_17_combine(elem):
                     else:
                         comb_elem_name = child.attrs['combine']
                     comb_elem = PrangElement(
-                        comb_elem_name, elem.namespaces.copy(), elem.base_uri,
-                        {})
+                        comb_elem_name, elem.namespaces.copy(),
+                        elem.base_uri, {})
 
                     for c in list(
                             chain(
@@ -639,7 +631,8 @@ def simplify_4_18_grammar(elem):
                 del pattern_attrs[k]
 
         start_el = PrangElement(
-            elem, 'start', pattern_namespaces.copy(), pattern_base_uri, {}, [])
+            elem, 'start', pattern_namespaces.copy(), pattern_base_uri, {},
+            [])
         elem.children = [start_el]
 
         pattern_el = PrangElement(
@@ -677,7 +670,8 @@ def simplify_4_18_grammar(elem):
                     if el.name == 'ref' and el.attrs['name'] == dup_name:
                         el.attrs['name'] = new_name
                 elif grammar_count == 1:
-                    if el.name == 'parentRef' and el.attrs['name'] == dup_name:
+                    if el.name == 'parentRef' and \
+                            el.attrs['name'] == dup_name:
                         el.attrs['name'] = new_name
                 else:
                     return
@@ -762,8 +756,8 @@ def simplify_4_19_define_ref(grammar_el):
             idx = el.remove()
             el_parent.insert_child(idx, ref_el)
             def_el = PrangElement(
-                'define', grammar_el.base_uri, grammar_el.namespaces.copy(),
-                {'name': def_name})
+                'define', grammar_el.base_uri,
+                grammar_el.namespaces.copy(), {'name': def_name})
             grammar_el.append_child(def_el)
             def_el.append_child(el)
 
@@ -817,8 +811,8 @@ def simplify_4_20_not_allowed(grammar_el):
 
     def not_allowed_elems(el):
         if el.name in (
-                'attribute', 'list', 'group', 'interleave', 'oneOrMore') and \
-                sum(
+                'attribute', 'list', 'group', 'interleave',
+                'oneOrMore') and sum(
                     1 for c in el.iter_child_elems()
                     if c.name == 'notAllowed') > 0:
 
@@ -940,25 +934,59 @@ def check_choice(el):
         check_choice(c)
 
 
-def simplify(schema_elem):
-    simplify_4_2_whitespace(schema_elem)
-    simplify_datalibrary_4_3_add(schema_elem)
-    simplify_datalibrary_4_3_remove(schema_elem)
-    simplify_type_value(schema_elem)
-    simplify_href(schema_elem)
-    simplify_externalRef(schema_elem)
-    simplify_include(schema_elem)
-    simplify_name_attribute(schema_elem)
-    simplify_ns_attribute(schema_elem)
-    simplify_qnames(schema_elem)
-    simplify_4_11_div(schema_elem)
-    simplify_4_12_num_children(schema_elem)
-    simplify_4_13_mixed(schema_elem)
-    simplify_4_14_optional(schema_elem)
-    simplify_4_15_zero_or_more(schema_elem)
-    simplify_4_16_constraints(schema_elem)
-    simplify_4_17_combine(schema_elem)
-    simplify_4_18_grammar(schema_elem)
-    simplify_4_19_define_ref(schema_elem)
-    simplify_4_20_not_allowed(schema_elem)
-    simplify_4_21_empty(schema_elem)
+def simplify(schema_el):
+    simplify_4_2_whitespace(schema_el)
+    simplify_datalibrary_4_3_add(schema_el)
+    simplify_datalibrary_4_3_remove(schema_el)
+    simplify_type_value(schema_el)
+    simplify_href(schema_el)
+    simplify_externalRef(schema_el)
+    simplify_include(schema_el)
+    simplify_name_attribute(schema_el)
+    simplify_ns_attribute(schema_el)
+    simplify_qnames(schema_el)
+    simplify_4_11_div(schema_el)
+    simplify_4_12_num_children(schema_el)
+    simplify_4_13_mixed(schema_el)
+    simplify_4_14_optional(schema_el)
+    simplify_4_15_zero_or_more(schema_el)
+    simplify_4_16_constraints(schema_el)
+    simplify_4_17_combine(schema_el)
+    simplify_4_18_grammar(schema_el)
+    simplify_4_19_define_ref(schema_el)
+    simplify_4_20_not_allowed(schema_el)
+    simplify_4_21_empty(schema_el)
+
+
+def nc_contains(nc, n):
+    if nc.
+contains :: NameClass -> QName -> Bool
+contains AnyName _ = True
+contains (AnyNameExcept nc) n = not (contains nc n)
+contains (NsName ns1) (QName ns2 _) = (ns1 == ns2)
+contains (NsNameExcept ns1 nc) (QName ns2 ln) =
+  ns1 == ns2 && not (contains nc (QName ns2 ln))
+  contains (Name ns1 ln1) (QName ns2 ln2) = (ns1 == ns2) && (ln1 == ln2)
+  contains (NameClassChoice nc1 nc2) n = (contains nc1 n) || (contains nc2 n)
+
+def validate(schema_el, doc_el):
+    return False
+
+rng_str = pkgutil.get_data('prang', 'relaxng.rng').decode('utf8')
+rng_dom = xml.dom.minidom.parseString(rng_str)
+full_rng_el = to_prang_elem(None, rng_dom.documentElement)
+rng_el = simplify(full_rng_el)
+
+
+class Schema():
+    def __init__(self, schema_str):
+        schema_dom = xml.dom.minidom.parseString(schema_str)
+        full_schema_el = to_prang_elem(
+            None, schema_dom.documentElement)
+        validate(rng_el, schema_dom)
+        self.schema_el = simplify(full_schema_el)
+
+    def is_valid(self, doc):
+        if isinstance(doc, text_type):
+            pass
+            # doc_dom = xml.dom.minidom.parseString(doc)

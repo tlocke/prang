@@ -28,5 +28,6 @@ setup(
     ],
     keywords="RELAX NG XML schema",
     packages=("prang",),
+    package_data={'prang': ['relaxng.rng']},
     install_requires=['six', 'requests'],
 )
