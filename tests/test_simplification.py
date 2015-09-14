@@ -1,11 +1,11 @@
-import prang
+import prang.simplification
 import xml.dom.minidom
 
 
 def compare_simplify(
         func, input_schema_str, desired_simplified_schema_str, *args):
     input_schema_dom = xml.dom.minidom.parseString(input_schema_str)
-    input_schema_el = prang.to_prang_elem(
+    input_schema_el = prang.simplification.to_prang_elem(
         None, input_schema_dom.documentElement)
     func(*([input_schema_el] + list(args)))
     simplified_schema_str = str(input_schema_el)
@@ -35,7 +35,7 @@ def test_simplification():
     schema_dom = xml.dom.minidom.parseString(schema_str)
     schema_elem = prang.to_prang_elem(None, schema_dom.documentElement)
     # print('prang out', str(schema_elem))
-    prang.simplify(schema_elem)
+    prang.simplification.simplify(schema_elem)
     simplified_schema_str = str(schema_elem)
     # print("simplified out", simplified_schema_str)
     desired_simplified_schema_str = """<?xml version="1.0"?>
@@ -106,8 +106,7 @@ def test_4_11_div():
 
     desired_schema_str = """<?xml version="1.0"?>
 <element
-    name="addressBook"
-    xmlns="http://relaxng.org/ns/structure/1.0">
+    name="addressBook">
   <element
       name="email">
     <text/>
@@ -118,7 +117,8 @@ def test_4_11_div():
   </element>
 </element>
 """
-    compare_simplify(prang.simplify_4_11_div, schema_str, desired_schema_str)
+    compare_simplify(
+        prang.simplification.simplify_4_11_div, schema_str, desired_schema_str)
 
 
 def test_4_12_num_children():
@@ -142,8 +142,7 @@ def test_4_12_num_children():
 
     desired_schema_str = """<?xml version="1.0"?>
 <element
-    name="addressBook"
-    xmlns="http://relaxng.org/ns/structure/1.0">
+    name="addressBook">
   <choice>
     <choice>
       <element
@@ -163,7 +162,8 @@ def test_4_12_num_children():
 </element>
 """
     compare_simplify(
-        prang.simplify_4_12_num_children, schema_str, desired_schema_str)
+        prang.simplification.simplify_4_12_num_children, schema_str,
+        desired_schema_str)
 
     schema_str = ''.join(
         [
@@ -179,8 +179,7 @@ def test_4_12_num_children():
 
     desired_schema_str = """<?xml version="1.0"?>
 <element
-    name="addressBook"
-    xmlns="http://relaxng.org/ns/structure/1.0">
+    name="addressBook">
   <element
       name="email">
     <text/>
@@ -188,7 +187,8 @@ def test_4_12_num_children():
 </element>
 """
     compare_simplify(
-        prang.simplify_4_12_num_children, schema_str, desired_schema_str)
+        prang.simplification.simplify_4_12_num_children, schema_str,
+        desired_schema_str)
 
     schema_str = ''.join(
         [
@@ -207,8 +207,7 @@ def test_4_12_num_children():
 
     desired_schema_str = """<?xml version="1.0"?>
 <element
-    name="addressBook"
-    xmlns="http://relaxng.org/ns/structure/1.0">
+    name="addressBook">
   <attribute>
     <anyName>
       <except>
@@ -225,7 +224,8 @@ def test_4_12_num_children():
 </element>
 """
     compare_simplify(
-        prang.simplify_4_12_num_children, schema_str, desired_schema_str)
+        prang.simplification.simplify_4_12_num_children, schema_str,
+        desired_schema_str)
 
 
 def test_4_13_mixed():
@@ -240,8 +240,7 @@ def test_4_13_mixed():
 """
     desired_schema_str = """<?xml version="1.0"?>
 <element
-    name="addressBook"
-    xmlns="http://relaxng.org/ns/structure/1.0">
+    name="addressBook">
   <interleave>
     <element
         name="email">
@@ -252,7 +251,8 @@ def test_4_13_mixed():
 </element>
 """
     compare_simplify(
-        prang.simplify_4_13_mixed, schema_str, desired_schema_str)
+        prang.simplification.simplify_4_13_mixed, schema_str,
+        desired_schema_str)
 
 
 def test_4_14_optional():
@@ -267,8 +267,7 @@ def test_4_14_optional():
 """
     desired_schema_str = """<?xml version="1.0"?>
 <element
-    name="addressBook"
-    xmlns="http://relaxng.org/ns/structure/1.0">
+    name="addressBook">
   <choice>
     <element
         name="email">
@@ -279,23 +278,26 @@ def test_4_14_optional():
 </element>
 """
     compare_simplify(
-        prang.simplify_4_14_optional, schema_str, desired_schema_str)
+        prang.simplification.simplify_4_14_optional, schema_str,
+        desired_schema_str)
 
 
 def test_4_15_zero_or_more_element():
-    schema_str = """<?xml version="1.0"?>
-<element name="addressBook" xmlns="http://relaxng.org/ns/structure/1.0">
-  <zeroOrMore>
-    <element name="email">
-      <text/>
-    </element>
-  </zeroOrMore>
-</element>
-"""
+    schema_str = ''.join(
+        [
+            '<?xml version="1.0"?>',
+            '<element name="addressBook" ',
+            'xmlns="http://relaxng.org/ns/structure/1.0">',
+            '<zeroOrMore>',
+            '<element name="email">',
+            '<text/>',
+            '</element>',
+            '</zeroOrMore>',
+            '</element>'])
+
     desired_schema_str = """<?xml version="1.0"?>
 <element
-    name="addressBook"
-    xmlns="http://relaxng.org/ns/structure/1.0">
+    name="addressBook">
   <choice>
     <oneOrMore>
       <element
@@ -308,14 +310,15 @@ def test_4_15_zero_or_more_element():
 </element>
 """
     compare_simplify(
-        prang.simplify_4_15_zero_or_more, schema_str, desired_schema_str)
+        prang.simplification.simplify_4_15_zero_or_more, schema_str,
+        desired_schema_str)
 
 
 def test_4_17_combine():
     schema_str = ''.join(
         [
             '<?xml version="1.0"?>',
-            '<grammar>',
+            '<grammar xmlns="http://relaxng.org/ns/structure/1.0">',
             '<start>',
             '<element name="addressBook">',
             '<zeroOrMore>',
@@ -367,7 +370,8 @@ def test_4_17_combine():
 </grammar>
 """
     compare_simplify(
-        prang.simplify_4_17_combine, schema_str, desired_schema_str)
+        prang.simplification.simplify_4_17_combine, schema_str,
+        desired_schema_str)
 
 
 '''
@@ -375,7 +379,7 @@ def test_4_18_grammar():
     schema_str = ''.join(
         [
             '<?xml version="1.0"?>',
-            '<grammar>',
+            '<grammar xmlns="http://relaxng.org/ns/structure/1.0">',
             '<grammar>',
             '<define name="inline">',
             '<zeroOrMore>',
@@ -416,7 +420,8 @@ def test_4_18_grammar():
             '</grammar>'])
 
     desired_schema_str = """<?xml version="1.0"?>
-<grammar>
+<grammar
+    xmlns="http://relaxng.org/ns/structure/1.0">
   <grammar>
     <define
         name="inline">
@@ -473,7 +478,8 @@ def test_4_18_grammar():
 </grammar>
 """
     compare_simplify(
-        prang.simplify_4_18_grammar, schema_str, desired_schema_str)
+        prang.simplificiation.simplify_4_18_grammar, schema_str,
+        desired_schema_str)
 '''
 
 
@@ -481,7 +487,7 @@ def test_4_19_define_ref():
     schema_str = ''.join(
         [
             '<?xml version="1.0"?>',
-            '<grammar>',
+            '<grammar xmlns="http://relaxng.org/ns/structure/1.0">',
             '<start>',
             '<element name="name">',
             '<text/>'
@@ -505,12 +511,13 @@ def test_4_19_define_ref():
 </grammar>
 """
     compare_simplify(
-        prang.simplify_4_19_define_ref, schema_str, desired_schema_str)
+        prang.simplification.simplify_4_19_define_ref, schema_str,
+        desired_schema_str)
 
     schema_str = ''.join(
         [
             '<?xml version="1.0"?>',
-            '<grammar>',
+            '<grammar xmlns="http://relaxng.org/ns/structure/1.0">',
             '<start>',
             '<ref name="c"/>',
             '</start>',
@@ -553,12 +560,13 @@ def test_4_19_define_ref():
 </grammar>
 """
     compare_simplify(
-        prang.simplify_4_19_define_ref, schema_str, desired_schema_str)
+        prang.simplification.simplify_4_19_define_ref, schema_str,
+        desired_schema_str)
 
     schema_str = ''.join(
         [
             '<?xml version="1.0"?>',
-            '<grammar>',
+            '<grammar xmlns="http://relaxng.org/ns/structure/1.0">',
             '<start>',
             '<element name="first_name">',
             '<ref name="zathustra"/>',
@@ -600,7 +608,8 @@ def test_4_19_define_ref():
 </grammar>
 """
     compare_simplify(
-        prang.simplify_4_19_define_ref, schema_str, desired_schema_str)
+        prang.simplification.simplify_4_19_define_ref, schema_str,
+        desired_schema_str)
     '''
     schema_str = ''.join(
         [
@@ -696,7 +705,7 @@ def test_4_19_define_ref():
     schema_str = ''.join(
         [
             '<?xml version="1.0"?>',
-            '<grammar>',
+            '<grammar xmlns="http://relaxng.org/ns/structure/1.0">',
             '<start>',
             '<ref name="styleNameRef"/>',
             '<ref name="text-list"/>',
@@ -734,12 +743,14 @@ def test_4_19_define_ref():
 </grammar>
 """
     compare_simplify(
-        prang.simplify_4_19_define_ref, schema_str, desired_schema_str)
+        prang.simplification.simplify_4_19_define_ref, schema_str,
+        desired_schema_str)
 
 
 def test_odf_1_2():
     schema_str = ''.join(
         open('/home/tlocke/prang/tests/odf_1_2.rng').readlines())
     schema_dom = xml.dom.minidom.parseString(schema_str)
-    schema_elem = prang.to_prang_elem(None, schema_dom.documentElement)
-    prang.simplify(schema_elem)
+    schema_elem = prang.simplification.to_prang_elem(
+        None, schema_dom.documentElement)
+    prang.simplification.simplify(schema_elem)
