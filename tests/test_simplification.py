@@ -374,113 +374,57 @@ def test_4_17_combine():
         desired_schema_str)
 
 
-'''
 def test_4_18_grammar():
     schema_str = ''.join(
         [
             '<?xml version="1.0"?>',
             '<grammar xmlns="http://relaxng.org/ns/structure/1.0">',
-            '<grammar>',
-            '<define name="inline">',
-            '<zeroOrMore>',
-            '<ref name="inline.class"/>',
-            '</zeroOrMore>',
-            '</define>',
-            '<define name="inline.class">',
-            '<choice>',
-            '<text/>',
-            '<element name="bold">',
-            '<ref name="inline"/>',
-            '</element>',
-            '<element name="italic">',
-            '<ref name="inline"/>',
-            '</element>',
-            '</choice>',
-            '</define>',
-            '</grammar>',
             '<start>',
-            '<element name="doc">',
-            '<zeroOrMore>',
-            '<element name="p">',
-            '<ref name="inline"/>',
-            '</element>',
-            '</zeroOrMore>',
-            '</element>',
+            '<grammar>',
+            '<start>',
+            '<ref name="foo"/>',
             '</start>',
-            '<define name="inline.class" combine="choice">',
-            '<choice>',
-            '<element name="code">',
-            '<ref name="inline"/>',
+            '<define name="foo">',
+            '<element name="innerFoo">',
+            '<parentRef name="foo"/>',
             '</element>',
-            '<element name="em">',
-            '<ref name="inline"/>',
+            '</define>',
+            '</grammar>'
+            '</start>',
+            '<define name="foo">',
+            '<element name="outerFoo">',
+            '<empty/>',
             '</element>',
-            '</choice>',
             '</define>',
             '</grammar>'])
 
     desired_schema_str = """<?xml version="1.0"?>
 <grammar
     xmlns="http://relaxng.org/ns/structure/1.0">
-  <grammar>
-    <define
-        name="inline">
-      <zeroOrMore>
-        <ref
-            name="inline.class"/>
-      </zeroOrMore>
-    </define>
-    <define
-        name="inline.class">
-      <choice>
-        <text/>
-        <element
-            name="bold">
-          <ref
-              name="inline"/>
-        </element>
-        <element
-            name="italic">
-          <ref
-              name="inline"/>
-        </element>
-      </choice>
-    </define>
-  </grammar>
   <start>
-    <element
-        name="doc">
-      <zeroOrMore>
-        <element
-            name="p">
-          <ref
-              name="inline"/>
-        </element>
-      </zeroOrMore>
-    </element>
+    <ref
+        name="foo"/>
   </start>
   <define
-      name="inline.class"
-      combine="choice">
-    <choice>
-      <element
-          name="code">
-        <ref
-            name="inline"/>
-      </element>
-      <element
-          name="em">
-        <ref
-            name="inline"/>
-      </element>
-    </choice>
+      name="foo_g">
+    <element
+        name="outerFoo">
+      <empty/>
+    </element>
+  </define>
+  <define
+      name="foo">
+    <element
+        name="innerFoo">
+      <ref
+          name="foo_g"/>
+    </element>
   </define>
 </grammar>
 """
     compare_simplify(
-        prang.simplificiation.simplify_4_18_grammar, schema_str,
+        prang.simplification.simplify_4_18_grammar, schema_str,
         desired_schema_str)
-'''
 
 
 def test_4_19_define_ref():

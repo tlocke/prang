@@ -179,6 +179,9 @@ def simplify_4_2_whitespace(elem):
         for attr_name, attr_value in list(elem.attrs.items()):
             if attr_name in ('name', 'type', 'combine'):
                 elem.attrs[attr_name] = attr_value.strip()
+        child = list(elem.iter_children())[0]
+        elem.remove_child(child)
+        elem.append_child(child.strip())
 
     if elem.name not in ('value', 'param'):
         for child in list(elem.iter_children()):
@@ -338,15 +341,18 @@ def simplify_4_7_include(schema_el):
             if has_start_component(elem):
                 remove_start_components(sub_elem)
 
-            def find_define_components(element, defines):
-                if element.name == 'define':
-                    defines.add(element.attrs['name'])
-                elif element.name == 'div':
-                    for child in element.iter_child_elems():
-                        find_define_components(child, defines)
-                return defines
+            defines = set()
 
-            defines = find_define_components(elem, set())
+            def find_define_components(element):
+                for child in element.iter_child_elems():
+                    if child.name == 'define':
+                        defines.add(child.attrs['name'])
+                    elif element.name == 'div':
+                        find_define_components(child)
+
+            find_define_components(elem)
+
+            print("defines", defines)
 
             def remove_define_components(element):
                 for child in list(element.iter_child_elems()):
@@ -380,8 +386,7 @@ def simplify_name_attribute(elem):
             name_elem_attrs['ns'] = ''
 
         name_elem = PrangElement(
-            name_elem_name, elem.namespaces, elem.base_uri,
-            name_elem_attrs)
+            name_elem_name, elem.namespaces, elem.base_uri, name_elem_attrs)
         name_elem.append_child(attr_parts[-1])
         elem.insert_child(0, name_elem)
         del elem.attrs['name']
@@ -443,57 +448,67 @@ def simplify_4_11_div(el):
             el_parent.insert_child(idx, child)
 
 
-def simplify_4_12_num_children(el):
-    for child in list(el.iter_child_elems()):
-        simplify_4_12_num_children(child)
+def simplify_4_12_num_children(schema_el):
 
-    if el.name in (
-            'define', 'oneOrMore', 'zeroOrMore', 'optional', 'list',
-            'mixed') and sum(1 for c in el.iter_children()) > 1:
-        group_elem = PrangElement(
-            'group', el.namespaces.copy(), el.base_uri, {})
+    def first_batch(el):
+        for child in list(el.iter_child_elems()):
+            first_batch(child)
 
-        for child in list(el.iter_children()):
-            group_elem.append_child(child)
-        el.append_child(group_elem)
-
-    elif el.name == 'element':
-        if sum(1 for c in el.iter_children()) > 2:
+        if el.name in (
+                'define', 'oneOrMore', 'zeroOrMore', 'optional', 'list',
+                'mixed') and sum(1 for c in el.iter_children()) > 1:
             group_elem = PrangElement(
                 'group', el.namespaces.copy(), el.base_uri, {})
-            for child in list(el.iter_children())[1:]:
+
+            for child in list(el.iter_children()):
                 group_elem.append_child(child)
             el.append_child(group_elem)
 
-    elif el.name == 'except':
-        if sum(1 for c in el.iter_children()) > 1:
-            choice_elem = PrangElement(
-                'choice', el.namespaces, el.base_uri, {})
-            for child in list(el.iter_children()):
-                choice_elem.append_child(child)
-            el.append_child(choice_elem)
+        elif el.name == 'element':
+            if sum(1 for c in el.iter_children()) > 2:
+                group_elem = PrangElement(
+                    'group', el.namespaces.copy(), el.base_uri, {})
+                for child in list(el.iter_children())[1:]:
+                    group_elem.append_child(child)
+                el.append_child(group_elem)
 
-    elif el.name == 'attribute':
-        if sum(1 for c in el.iter_children()) == 1:
-            el.append_child(
-                PrangElement('text', el.namespaces, el.base_uri, {}))
+        elif el.name == 'except':
+            if sum(1 for c in el.iter_children()) > 1:
+                choice_elem = PrangElement(
+                    'choice', el.namespaces, el.base_uri, {})
+                for child in list(el.iter_children()):
+                    choice_elem.append_child(child)
+                el.append_child(choice_elem)
 
-    elif el.name in ('choice', 'group', 'interleave'):
-        len_children = sum(1 for c in el.iter_children())
-        if len_children == 1:
-            child = list(el.iter_children())[0]
-            el.name = child.name
-            el.attrs.clear()
-            el.attrs.update(child.attrs)
-            child.remove()
-            for c in list(child.iter_children()):
-                el.append_child(c)
-        elif len_children > 2:
-            new_elem = PrangElement(
-                el.name, el.namespaces, el.base_uri, {})
-            for child in list(el.iter_children())[:-1]:
-                new_elem.append_child(child)
-            el.insert_child(0, new_elem)
+        elif el.name == 'attribute':
+            if sum(1 for c in el.iter_children()) == 1:
+                el.append_child(
+                    PrangElement('text', el.namespaces, el.base_uri, {}))
+
+    first_batch(schema_el)
+
+    def second_batch(el):
+        for child in list(el.iter_child_elems()):
+            second_batch(child)
+
+        if el.name in ('choice', 'group', 'interleave'):
+            len_children = sum(1 for c in el.iter_children())
+            if len_children == 1:
+                child = list(el.iter_children())[0]
+                el.name = child.name
+                el.attrs.clear()
+                el.attrs.update(child.attrs)
+                child.remove()
+                for c in list(child.iter_children()):
+                    el.append_child(c)
+            elif len_children > 2:
+                new_elem = PrangElement(
+                    el.name, el.namespaces, el.base_uri, {})
+                for child in list(el.iter_children())[:-1]:
+                    new_elem.append_child(child)
+                el.insert_child(0, new_elem)
+
+    second_batch(schema_el)
 
 
 def simplify_4_13_mixed(elem):
@@ -654,45 +669,45 @@ def simplify_4_18_grammar(schema_el):
         start_el.append_child(pattern_el)
 
     names = set()
-    dups = []
+    dup_map = {}
 
-    def find_defs(el):
-        if el.name == 'define':
+    def find_defs(el, grammar_count):
+        if el.name == 'grammar':
+            grammar_count += 1
+        elif el.name == 'define':
             def_name = el.attrs['name']
             if def_name in names:
-                dups.append(el)
+                new_name = def_name + '_g'
+                while new_name in names:
+                    new_name += '_g'
+                names.add(new_name)
+                dup_map[(def_name, grammar_count)] = new_name
+                el.attrs['name'] = new_name
             else:
                 names.add(def_name)
-        for c in el.iter_child_elems():
-            find_defs(c)
+        for c in list(el.iter_child_elems()):
+            find_defs(c, grammar_count)
 
-    find_defs(schema_el)
+    find_defs(schema_el, 0)
+    print('names are', names)
+    print('dup map is', dup_map)
 
-    for dup_el in dups:
-        dup_name = dup_el.name
-        new_name = dup_name
-        while new_name in names:
-            new_name += '_'
-        names.add(new_name)
-        dup_el.name = new_name
+    def rename_refs(el, grammar_count):
+        if el.name == 'grammar':
+            grammar_count += 1
+        elif el.name == 'ref':
+            key = (el.attrs['name'], grammar_count)
+            if key in dup_map:
+                el.attrs['name'] = dup_map[key]
+        elif el.name == 'parentRef':
+            key = (el.attrs['name'], grammar_count - 1)
+            if key in dup_map:
+                el.attrs['name'] = dup_map[key]
 
-        def find_refs(el, grammar_count):
-            if grammar_count == 0:
-                if el.name == 'ref' and el.attrs['name'] == dup_name:
-                    el.attrs['name'] = new_name
-            elif grammar_count == 1:
-                if el.name == 'parentRef' and \
-                        el.attrs['name'] == dup_name:
-                    el.attrs['name'] = new_name
-            else:
-                return
-            if el.name == 'grammar':
-                grammar_count += 1
+        for c in list(el.iter_child_elems()):
+            rename_refs(c, grammar_count)
 
-            for c in el.iter_child_elems():
-                find_refs(c, grammar_count)
-        find_refs(dup_el, 0)
-        schema_el.append_child(dup_el)
+    rename_refs(schema_el, 0)
 
     def handle_refs(el):
         for c in list(el.iter_child_elems()):
@@ -702,9 +717,16 @@ def simplify_4_18_grammar(schema_el):
             el.name = 'ref'
         elif el.name == 'grammar' and el.parent is not None:
             el_parent = el.parent
+            grammar_children = list(el.iter_children())
+            grammar_pattern = list(grammar_children[0].iter_children())[0]
+            grammar_defines = grammar_children[1:]
             i = el.remove()
-            el_parent.insert_child(
-                i, list(list(el.iter_children())[0].iter_children())[0])
+            el_parent.insert_child(i, grammar_pattern)
+            top_grammar = el_parent
+            while top_grammar.parent is not None:
+                top_grammar = top_grammar.parent
+            for c in grammar_defines:
+                top_grammar.append_child(c)
 
     handle_refs(schema_el)
     schema_el.attrs['xmlns'] = RELAXNG_NS
@@ -965,9 +987,9 @@ def simplify(schema_el):
     simplify_qnames(schema_el)
     # print("before 4.11", schema_el)
     simplify_4_11_div(schema_el)
-    # print("before 4.12", schema_el)
+    # print("after 4.11", schema_el)
     simplify_4_12_num_children(schema_el)
-    # print("before 4.13", schema_el)
+    # print("after 4.12", schema_el)
     simplify_4_13_mixed(schema_el)
     simplify_4_14_optional(schema_el)
     simplify_4_15_zero_or_more(schema_el)
@@ -977,6 +999,7 @@ def simplify(schema_el):
     simplify_4_18_grammar(schema_el)
     # print("after 4.18", schema_el)
     simplify_4_19_define_ref(schema_el)
+    # print("after 4.19 def ref", schema_el)
     simplify_4_20_not_allowed(schema_el)
     # print("before simplifying empty", schema_el)
     simplify_4_21_empty(schema_el)

@@ -14,10 +14,7 @@ rng_dom = xml.dom.minidom.parseString(rng_str)
 rng_el = prang.simplification.to_prang_elem(None, rng_dom.documentElement)
 prang.simplification.simplify(rng_el)
 test_el = rng_el
-rng_el = prang.validation.typify(rng_el)
-rng_start_el = rng_el.children[0]
-rng_top_el = rng_start_el.children[0]
-rng_defs = dict((c.atts['name'], c.children[0]) for c in rng_el.children[1:])
+# rng_el = prang.validation.typify(rng_el)
 
 
 class Schema():
@@ -47,11 +44,6 @@ class Schema():
         self.frozen_schema_el = prang.validation.typify(self.schema_el)
         # print("finished typifying")
         # print(self.frozen_schema_el)
-        start_el = self.frozen_schema_el.children[0]
-        self.top_el = start_el.children[0]
-        self.defs = dict(
-            (el.atts['name'], el.children[0])
-            for el in self.frozen_schema_el.children[1:])
 
     def validate(self, doc_str=None, doc_file=None, doc_file_name=None):
         if doc_file_name is not None:
@@ -61,4 +53,6 @@ class Schema():
         if doc_str is None:
             raise Exception(
                 "A doc_str, doc_file or doc_file_name argument must be given.")
-        prang.validation.validate(self.defs, self.top_el, doc_str)
+        # print("frozen schema is " + str(self.frozen_schema_el))
+        # print("starting to validate", doc_str)
+        prang.validation.validate(self.frozen_schema_el, doc_str)
