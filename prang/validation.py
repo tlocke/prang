@@ -270,9 +270,9 @@ def contains(nc, n):
         else:
             return False
     elif isinstance(nc, Name):
-        print("It's a name in contains")
-        print("nc", nc)
-        print("n", n)
+        # print("It's a name in contains")
+        # print("nc", nc)
+        # print("n", n)
         return (nc.atts['ns'], nc.children[0]) == n
     elif isinstance(nc, Choice):
         return any(contains(nc, n) for nc in nc.children)
@@ -293,27 +293,20 @@ def nullable(p):
 
 
 def child_deriv(p, s):
-    print("in child deriv, pattern ", p)
-    print("in child deriv, node ", s)
-
     if isinstance(s, str):
         return text_deriv(p, s)
     else:
-        print("p1 is", p)
+        # print("p1 is", p)
         p1 = start_tag_open_deriv(p, s.qn)
-        print("p1 is", p1)
-        check_choice(p1)
+        # print("p1 is", p1)
         p2 = atts_deriv(p1, s.atts)
-        print("p2 is", p2)
-        check_choice(p2)
+        # print("p2 is", p2)
         p3 = start_tag_close_deriv(p2)
-        print("p3 is", p3)
-        check_choice(p3)
+        # print("p3 is", p3)
         p4 = children_deriv(p3, s.children)
-        check_choice(p4)
-        print("p4 is", p4)
+        # print("p4 is", p4)
         p5 = end_tag_deriv(p4)
-        print("p5 is", p5)
+        # print("p5 is", p5)
         return p5
 
 
@@ -330,31 +323,21 @@ class NotAllowedException(Exception):
     pass
 
 
-def check_choice(el):
-    if isinstance(el, Choice):
-        for c in el.children:
-            check_choice(c)
-
-        if len(el.children) != 2:
-            raise Exception("Check choice fail!", el)
-
-
 def start_tag_open_deriv(p, qn):
-    print("in start tag open deriv, pattern", p)
-    print("in start tag open deriv, qn", qn)
+    # print("in start tag open deriv, pattern", p)
+    # print("in start tag open deriv, qn", qn)
 
     if isinstance(p, Choice):
         p1, p2 = p.children
         res = choice(
             start_tag_open_deriv(p1, qn),
             start_tag_open_deriv(p2, qn))
-        check_choice(res)
         return res
     elif isinstance(p, Element):
-        print("in open deriv, it's an element.")
+        # print("in open deriv, it's an element.")
         nc, top = p.children
-        print("nc", nc)
-        print("top", top)
+        # print("nc", nc)
+        # print("top", top)
         if contains(nc, qn):
             return after(top, EMPTY)
         else:
@@ -368,7 +351,7 @@ def start_tag_open_deriv(p, qn):
     elif isinstance(p, OneOrMore):
         p1 = p.children[0]
         return apply_after(
-            partial(flip(group), choice(p1, EMPTY)),
+            partial(flip(group), choice(OneOrMore(p1), EMPTY)),
             start_tag_open_deriv(p1, qn))
     elif isinstance(p, Group):
         p1, p2 = p.children
@@ -532,6 +515,7 @@ def att_deriv(p, att_node):
         p1, p2 = p.children
         return choice(att_deriv(p1, att_node), att_deriv(p2, att_node))
     elif isinstance(p, Group):
+        p1, p2 = p.children
         return choice(
             group(att_deriv(p1, att_node), p2),
             group(p1, att_deriv(p2, att_node)))

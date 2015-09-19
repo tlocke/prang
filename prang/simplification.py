@@ -689,8 +689,6 @@ def simplify_4_18_grammar(schema_el):
             find_defs(c, grammar_count)
 
     find_defs(schema_el, 0)
-    print('names are', names)
-    print('dup map is', dup_map)
 
     def rename_refs(el, grammar_count):
         if el.name == 'grammar':

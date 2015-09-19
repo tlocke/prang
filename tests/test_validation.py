@@ -7,7 +7,8 @@ from prang.validation import (
     start_tag_close_deriv, after, interleave, children_deriv, text_deriv,
     child_deriv, choice, NotAllowed, whitespace, Choice, OneOrMore,
     start_tag_open_deriv, atts_deriv, one_or_more, strip_children_deriv,
-    group)
+    group, nullable, end_tag_deriv, apply_after, flip)
+from functools import partial
 
 
 def test_children_deriv_interleave():
@@ -393,6 +394,103 @@ def test_one_or_more():
             'x', ElementNode(QName('', 'bar'), tuple(), ())))
 
     assert str(child_deriv(schema, doc)) == str(NotAllowed())
+
+
+def test_one_or_more_multiple():
+    schema = Element(
+        Name({'ns': ''}, 'foo'),
+        OneOrMore(
+            Element(
+                Name({'ns': ''}, 'bar'),
+                EMPTY)))
+
+    doc = ElementNode(
+        QName('', 'foo'), (), (
+            ElementNode(QName('', 'bar'), (), ()),
+            ElementNode(QName('', 'bar'), (), ()),
+            ElementNode(QName('', 'bar'), (), ())))
+
+    qn = QName('', 'foo')
+    d1 = start_tag_open_deriv(schema, qn)
+
+    m1 = After(
+        OneOrMore(
+            Element(
+                Name({'ns': ''}, 'bar'),
+                EMPTY)),
+        EMPTY)
+    assert str(d1) == str(m1)
+
+    atts = ()
+    d2 = atts_deriv(d1, atts)
+
+    m2 = m1
+    assert str(d2) == str(m2)
+
+    d3 = start_tag_close_deriv(d2)
+    m21 = OneOrMore(
+        Element(
+            Name({'ns': ''}, 'bar'),
+            EMPTY))
+    m211 = Element(
+        Name({'ns': ''}, 'bar'),
+        EMPTY)
+    m22 = EMPTY
+    m3_1 = after(start_tag_close_deriv(m21), m22)
+    assert str(m3_1) == str(d3)
+    m3_2 = after(start_tag_close_deriv(m21), EMPTY)
+    assert str(m3_2) == str(d3)
+    m3_3 = after(one_or_more(start_tag_close_deriv(m211)), EMPTY)
+    assert str(m3_3) == str(d3)
+    m3_4 = after(one_or_more(m211), EMPTY)
+    m3_4 = After(OneOrMore(m211), EMPTY)
+    m3_4 = After(
+        OneOrMore(
+            Element(
+                Name({'ns': ''}, 'bar'),
+                EMPTY)),
+        EMPTY)
+
+    assert str(d3) == str(m3_4)
+
+    children = (
+        ElementNode(QName('', 'bar'), (), ()),
+        ElementNode(QName('', 'bar'), (), ()),
+        ElementNode(QName('', 'bar'), (), ()))
+
+    d4 = children_deriv(d3, children)
+
+    m4_1 = children_deriv(m3_4, children)
+    assert str(d4) == str(m4_1)
+    m4_2 = strip_children_deriv(m3_4, children)
+    assert str(d4) == str(m4_2)
+    child_0 = ElementNode(QName('', 'bar'), (), ())
+    m4_3 = child_deriv(m3_4, child_0)
+    child_0_qn = QName('', 'bar')
+    m41_1 = start_tag_open_deriv(m3_4, child_0_qn)
+    m31 = OneOrMore(
+        Element(
+            Name({'ns': ''}, 'bar'),
+            EMPTY))
+    m32 = EMPTY
+    m41_2 = apply_after(
+        partial(flip(after), m32), start_tag_open_deriv(m31, child_0_qn))
+    assert str(m41_1) == str(m41_2)
+    m5_1 = start_tag_open_deriv(m31, child_0_qn)
+    m311 = Element(
+        Name({'ns': ''}, 'bar'),
+        EMPTY)
+    m5_2 = apply_after(
+        partial(flip(group), choice(OneOrMore(m311), EMPTY)),
+        start_tag_open_deriv(m311, child_0_qn))
+    assert str(m5_1) == str(m5_2)
+
+    assert str(d4) == str(m4_3)
+
+    assert str(child_deriv(schema, doc)) == str(end_tag_deriv(d4))
+
+    assert nullable(child_deriv(schema, doc)) is True
+
 
 TEST_CASES_PATH = os.path.join(os.getcwd(), 'tests', 'test_cases')
 
