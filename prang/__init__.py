@@ -14,7 +14,7 @@ rng_dom = xml.dom.minidom.parseString(rng_str)
 rng_el = prang.simplification.to_prang_elem(None, rng_dom.documentElement)
 prang.simplification.simplify(rng_el)
 test_el = rng_el
-# rng_el = prang.validation.typify(rng_el)
+rng_el = prang.validation.typify(rng_el)
 
 
 class Schema():
@@ -36,7 +36,7 @@ class Schema():
         schema_dom = xml.dom.minidom.parseString(schema_str)
         self.schema_el = prang.simplification.to_prang_elem(
             base_uri, schema_dom.documentElement)
-        # prang.validation.validate(rng_defs, rng_top_el, schema_str)
+        prang.validation.validate(rng_el, schema_str)
         print("about to simplify")
         prang.simplification.simplify(self.schema_el)
         print(self.schema_el)

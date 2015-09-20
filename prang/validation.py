@@ -120,8 +120,8 @@ class Text(SchemaElement):
 
 
 class Value(SchemaElement):
-    def __init__(self, atts, p):
-        SchemaElement.__init__(self, atts, p)
+    def __init__(self, atts, *children):
+        SchemaElement.__init__(self, atts, *children)
 
 
 class Attribute(SchemaElement):
@@ -147,6 +147,11 @@ class Define(SchemaElement):
 class Grammar(SchemaElement):
     def __init__(self, *children):
         SchemaElement.__init__(self, {}, *children)
+
+
+class Param(SchemaElement):
+    def __init__(self, atts, *children):
+        SchemaElement.__init__(self, atts, *children)
 
 
 class NotAllowed(SchemaElement):
@@ -246,6 +251,10 @@ def typify(grammar_el):
                 return Grammar(*children)
             elif el.name == 'list':
                 return List(*children)
+            elif el.name == 'param':
+                return Param(el.attrs, *children)
+            elif el.name == 'notAllowed':
+                return NotAllowed()
             else:
                 raise Exception("element name not recognized " + el.name)
 
@@ -398,7 +407,8 @@ def text_deriv(p, s):
         else:
             return NotAllowed(p, s)
     elif isinstance(p, Data):
-        if datatypeAllows(p, s):
+        params = [c for c in p.children if isinstance(c, Param)]
+        if datatypeAllows(p, params, s):
             if len(p.children) == 0:
                 nc = None
             else:
@@ -466,9 +476,18 @@ def after(p1, p2):
         return After(p1, p2)
 
 
-def datatypeAllows(p, s):
-    return p.atts['datatypeLibrary'] == '' and \
-        p.atts['type'] in ('string', 'token')
+def datatypeAllows(p, params, s):
+    library = p.atts['datatypeLibrary']
+    if library == '':
+        return p.atts['type'] in ('string', 'token')
+    elif library == 'http://www.w3.org/2001/XMLSchema-datatypes':
+        for param in params:
+            param_name = param.atts['name']
+            if param_name == 'minLength' and len(s) < int(param.children[0]):
+                return False
+        return True
+    else:
+        return False
 
 
 def normalize_whitespace(s):
@@ -476,12 +495,20 @@ def normalize_whitespace(s):
 
 
 def datatypeEqual(p, s):
-    if p.atts['datatypeLibrary'] == '':
+    library = p.atts['datatypeLibrary']
+    child = '' if len(p.children) == 0 else p.children[0]
+    if library == '':
         if p.atts['type'] == 'string':
-            return p.children[0] == s
+            return child == s
         elif p.atts['type'] == 'token':
-            return normalize_whitespace(p.children[0]) == \
-                normalize_whitespace(s)
+            return normalize_whitespace(child) == normalize_whitespace(s)
+        else:
+            return False
+    elif library == 'http://www.w3.org/2001/XMLSchema-datatypes':
+        if p.atts['type'] == 'string':
+            return child == s
+        elif p.atts['type'] == 'token':
+            return normalize_whitespace(child) == normalize_whitespace(s)
         else:
             return False
     else:
@@ -520,11 +547,13 @@ def att_deriv(p, att_node):
             group(att_deriv(p1, att_node), p2),
             group(p1, att_deriv(p2, att_node)))
     elif isinstance(p, Interleave):
+        p1, p2 = p.children
         return choice(
             interleave(att_deriv(p1, att_node), p2),
             interleave(p1, att_deriv(p2, att_node)))
     elif isinstance(p, OneOrMore):
-        return group(att_deriv(p.p, att_node), choice(p, EMPTY))
+        p1 = p.children[0]
+        return group(att_deriv(p1, att_node), choice(OneOrMore(p1), EMPTY))
     elif isinstance(p, Attribute):
         nc, p1 = p.children
         if contains(nc, att_node.qn) and value_match(p1, att_node.s):
@@ -628,6 +657,11 @@ ElementNode = namedtuple('ElementNode', ['qn', 'atts', 'children'])
 
 
 def to_doc_elem(elem_dom):
+    for c in list(elem_dom.childNodes):
+        node_type = c.nodeType
+        if node_type == xml.dom.Node.PROCESSING_INSTRUCTION_NODE:
+            elem_dom.removeChild(c)
+    elem_dom.normalize()
     children = []
     for child in elem_dom.childNodes:
         node_type = child.nodeType

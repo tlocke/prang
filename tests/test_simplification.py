@@ -227,6 +227,58 @@ def test_4_12_num_children():
         prang.simplification.simplify_4_12_num_children, schema_str,
         desired_schema_str)
 
+    schema_str = ''.join(
+        [
+            '<?xml version="1.0"?>',
+            '<element name="addressBook" ',
+            'xmlns="http://relaxng.org/ns/structure/1.0">',
+            '<choice>',
+            '<element name="email">',
+            '<text/>',
+            '</element>',
+            '<element name="name">',
+            '<text/>',
+            '</element>',
+            '<element name="note">',
+            '<text/>',
+            '</element>',
+            '<element name="address">',
+            '<text/>',
+            '</element>',
+            '</choice>',
+            '</element>'])
+
+    desired_schema_str = """<?xml version="1.0"?>
+<element
+    name="addressBook">
+  <choice>
+    <choice>
+      <choice>
+        <element
+            name="email">
+          <text/>
+        </element>
+        <element
+            name="name">
+          <text/>
+        </element>
+      </choice>
+      <element
+          name="note">
+        <text/>
+      </element>
+    </choice>
+    <element
+        name="address">
+      <text/>
+    </element>
+  </choice>
+</element>
+"""
+    compare_simplify(
+        prang.simplification.simplify_4_12_num_children, schema_str,
+        desired_schema_str)
+
 
 def test_4_13_mixed():
     schema_str = """<?xml version="1.0"?>

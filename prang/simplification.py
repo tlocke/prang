@@ -129,6 +129,10 @@ RELAXNG_NS = 'http://relaxng.org/ns/structure/1.0'
 
 
 def to_prang_elem(parent, elem_dom):
+    for child in list(elem_dom.childNodes):
+        node_type = child.nodeType
+        if node_type == xml.dom.Node.PROCESSING_INSTRUCTION_NODE:
+            elem_dom.removeChild(child)
     elem_dom.normalize()
 
     if parent is None:
@@ -170,7 +174,6 @@ def to_prang_elem(parent, elem_dom):
             elem.append_child(to_prang_elem(elem, child))
         elif node_type == xml.dom.Node.TEXT_NODE:
             elem.append_child(child.data)
-
     return elem
 
 
@@ -449,11 +452,8 @@ def simplify_4_11_div(el):
 
 
 def simplify_4_12_num_children(schema_el):
-
-    def first_batch(el):
-        for child in list(el.iter_child_elems()):
-            first_batch(child)
-
+    def batch(el):
+        recurse = el
         if el.name in (
                 'define', 'oneOrMore', 'zeroOrMore', 'optional', 'list',
                 'mixed') and sum(1 for c in el.iter_children()) > 1:
@@ -484,14 +484,7 @@ def simplify_4_12_num_children(schema_el):
             if sum(1 for c in el.iter_children()) == 1:
                 el.append_child(
                     PrangElement('text', el.namespaces, el.base_uri, {}))
-
-    first_batch(schema_el)
-
-    def second_batch(el):
-        for child in list(el.iter_child_elems()):
-            second_batch(child)
-
-        if el.name in ('choice', 'group', 'interleave'):
+        elif el.name in ('choice', 'group', 'interleave'):
             len_children = sum(1 for c in el.iter_children())
             if len_children == 1:
                 child = list(el.iter_children())[0]
@@ -501,6 +494,7 @@ def simplify_4_12_num_children(schema_el):
                 child.remove()
                 for c in list(child.iter_children()):
                     el.append_child(c)
+                recurse = el.parent
             elif len_children > 2:
                 new_elem = PrangElement(
                     el.name, el.namespaces, el.base_uri, {})
@@ -508,7 +502,13 @@ def simplify_4_12_num_children(schema_el):
                     new_elem.append_child(child)
                 el.insert_child(0, new_elem)
 
-    second_batch(schema_el)
+        if recurse is None:
+            batch(schema_el)
+        else:
+            for child in list(recurse.iter_child_elems()):
+                batch(child)
+
+    batch(schema_el)
 
 
 def simplify_4_13_mixed(elem):
