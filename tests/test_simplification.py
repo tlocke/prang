@@ -1,5 +1,6 @@
 import prang.simplification
 import xml.dom.minidom
+import pytest
 
 
 def compare_simplify(
@@ -480,6 +481,32 @@ def test_4_18_grammar():
 
 
 def test_4_19_define_ref():
+    schema_str = ''.join(
+        [
+            '<?xml version="1.0"?>',
+            '<grammar xmlns="http://relaxng.org/ns/structure/1.0">',
+            '<start>',
+            '<ref name="foo"/>',
+            '</start>',
+            '<define name="foo">',
+            '<choice>',
+            '<element>',
+            '<name ns="">',
+            'foo',
+            '</name>',
+            '<empty/>',
+            '</element>',
+            '<ref name="foo"/>',
+            '</choice>',
+            '</define>',
+            '</grammar>'])
+
+    with pytest.raises(prang.simplification.PrangException):
+        schema_dom = xml.dom.minidom.parseString(schema_str)
+        schema_elem = prang.simplification.to_prang_elem(
+            None, schema_dom.documentElement)
+        prang.simplification.simplify_4_19_define_ref(schema_elem)
+
     schema_str = ''.join(
         [
             '<?xml version="1.0"?>',

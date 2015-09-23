@@ -1,6 +1,7 @@
 from functools import partial
 from collections import namedtuple
 import xml.dom
+from prang.simplification import PrangException
 
 
 class PrangNode():
@@ -328,7 +329,7 @@ def choice(p1, p2):
         return Choice(p1, p2)
 
 
-class NotAllowedException(Exception):
+class NotAllowedException(PrangException):
     pass
 
 

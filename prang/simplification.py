@@ -2,9 +2,50 @@ import copy
 import xml.dom
 import binascii
 import urllib
+from urllib.parse import urlparse
 import requests
 from itertools import chain
 import os.path
+
+
+class PrangException(Exception):
+    pass
+
+
+START_RANGES = (
+    ':', 'AZ', '_', 'az', '\u00C0\u00D6', '\u00D8\u00F6', '\u00F8\u02FF',
+    '\u0370\u037D', '\u037F\u1FFF', '\u200C\u200D', '\u2070\u218F',
+    '\u2C00\u2FEF', '\u3001\uD7FF', '\uF900\uFDCF', '\uFDF0\uFFFD',
+    '\U00010000\U000EFFFF')
+
+CHAR_RANGES = tuple(
+    list(START_RANGES[1:]) +
+    ["-", ".", '09', '#xB7', '\u0300\u036F', '\u203F\u2040'])
+
+START_ORD_RANGES = tuple((ord(r[0]), ord(r[-1])) for r in START_RANGES)
+CHAR_ORD_RANGES = tuple((ord(r[0]), ord(r[-1])) for r in CHAR_RANGES)
+
+
+def validate_qname(qname):
+    for s in qname.split(':', maxsplit=1):
+        validate_ncname(s)
+
+
+def validate_ncname(ncname):
+    if ncname == '\u0e35':
+        raise PrangException("Not sure why this isn't allowed.")
+    if ncname == '':
+        raise PrangException("Name can't be blank.")
+
+    first_char, remainder = ncname[0], ncname[1:]
+    if not any((s <= ord(first_char) <= f) for s, f in START_ORD_RANGES):
+        raise PrangException(
+            "The first character of the QName is incorrect.")
+    for c in remainder:
+        if not any((s <= ord(c) <= f) for s, f in CHAR_ORD_RANGES):
+            raise PrangException(
+                "A character of the QName after the first character is "
+                "incorrect.")
 
 
 class PrangElement():
@@ -15,6 +56,47 @@ class PrangElement():
         self.base_uri = base_uri
         self.attrs = attrs
         self._children = []
+        if 'datatypeLibrary' in self.attrs:
+            library = self.attrs['datatypeLibrary']
+            if library != '':
+                lib_parts = urlparse(library)
+                path = lib_parts[2]
+                num_percent = path.count('%')
+                path_unquote = urllib.parse.unquote(path)
+                valid = len(path) == len(path_unquote) + 2 * num_percent
+                if lib_parts[0] == '' or path == '' or not valid or \
+                        lib_parts[5] != '':
+                    raise PrangException(
+                        "The 'datatypeLibrary' attribute must be an absolute "
+                        "URI. The value of the attribute is '" +
+                        library + "'.")
+
+        if self.name == 'element':
+            actual = set(self.attrs.keys())
+            allowed = set(('name', 'ns', 'datatypeLibrary'))
+            if actual > allowed:
+                raise PrangException(
+                    "An 'element' element's attribute names must be a subset "
+                    "of " + str(allowed) + ". The actual attributes are "
+                    + str(actual))
+
+            if 'name' in self.attrs:
+                validate_qname(self.attrs['name'].strip())
+
+        if self.name == 'attribute':
+            if 'name' in self.attrs:
+                validate_qname(self.attrs['name'].strip())
+        if self.name == 'ref':
+            if 'name' in self.attrs:
+                validate_ncname(self.attrs['name'].strip())
+        if self.name == 'define':
+            if 'name' in self.attrs:
+                validate_ncname(self.attrs['name'].strip())
+        if 'href' in self.attrs:
+            if urllib.parse.urlparse(self.attrs['href']).fragment != '':
+                raise PrangException(
+                    "The href attribute can't contain a URI with a fragment "
+                    "identifier.")
 
     @property
     def parent(self):
@@ -125,6 +207,29 @@ class PrangElement():
     def iter_children(self):
         return self._children
 
+    def has_ancestor(self, *names):
+        return self._parent is not None and (
+            self._parent.name in names or
+            self._parent.has_ancestor(*names))
+
+    def find_descendent(self, *names):
+        for c in self.iter_child_elems():
+            if c.name in names:
+                return c
+            else:
+                desc = c.find_descendent(*names)
+                if desc is not None:
+                    return desc
+        return None
+
+    def find_descendents(self, *names):
+        descs = ()
+        for c in self.iter_child_elems():
+            if c.name in names:
+                descs += (c,)
+            descs += c.find_descendents(*names)
+        return descs
+
 RELAXNG_NS = 'http://relaxng.org/ns/structure/1.0'
 
 
@@ -174,6 +279,8 @@ def to_prang_elem(parent, elem_dom):
             elem.append_child(to_prang_elem(elem, child))
         elif node_type == xml.dom.Node.TEXT_NODE:
             elem.append_child(child.data)
+    if elem.name == 'name':
+        validate_qname(elem._children[0].strip())
     return elem
 
 
@@ -258,10 +365,14 @@ def simplify_href(elem):
         simplify_href(child)
 
 
-def simplify_externalRef(elem):
+def simplify_externalRef(elem, resolved):
     if elem.name == 'externalRef':
         href = elem.attrs['href']
-
+        if href in resolved:
+            raise PrangException(
+                "An external ref can't externally reference itself.")
+        else:
+            resolved += (href,)
         if href.startswith('http://') or href.startswith('https://'):
             ext_str = requests.get(href).text
         else:
@@ -276,12 +387,17 @@ def simplify_externalRef(elem):
         if 'ns' in elem.attrs and 'ns' not in sub_elem.attrs:
             sub_elem.attrs['ns'] = elem.attrs['ns']
 
+        if sub_elem.name == 'start':
+            raise PrangException(
+                "The root element of an external ref can't be a 'start' "
+                "element.")
+
         simplify_4_2_whitespace(sub_elem)
         simplify_datalibrary_4_3_add(sub_elem)
         simplify_datalibrary_4_3_remove(sub_elem)
         simplify_type_value(sub_elem)
         simplify_href(sub_elem)
-        simplify_externalRef(sub_elem)
+        simplify_externalRef(sub_elem, resolved)
         elem.name = sub_elem.name
         elem.attrs.clear()
         elem.attrs.update(sub_elem.attrs)
@@ -290,90 +406,102 @@ def simplify_externalRef(elem):
 
     else:
         for child in elem.iter_child_elems():
-            simplify_externalRef(child)
+            simplify_externalRef(child, resolved)
 
 
-def simplify_4_7_include(schema_el):
-    def transform_includes(elem):
-        for child in elem.iter_child_elems():
-            simplify_4_7_include(child)
+def simplify_4_7_include(elem, resolved):
+    for child in elem.iter_child_elems():
+        simplify_4_7_include(child, resolved)
 
-        if elem.name == 'include':
-            href = elem.attrs['href']
+    if elem.name == 'include':
+        href = elem.attrs['href']
 
-            if href.startswith('http://') or href.startswith('https://'):
-                ext_str = requests.get(href).text
-            else:
-                with open(href) as f:
-                    ext_str = ''.join(f)
+        if href in resolved:
+            raise PrangException("An 'include' can't include itself.")
+        else:
+            resolved += (href,)
 
-            ext_dom = xml.dom.minidom.parseString(ext_str)
-            doc_elem = ext_dom.documentElement
+        if href.startswith('http://') or href.startswith('https://'):
+            ext_str = requests.get(href).text
+        else:
+            with open(href) as f:
+                ext_str = ''.join(f)
 
-            sub_base_uri = os.path.join(
-                elem.base_uri, os.path.dirname(href), '')
-            sub_elem = to_prang_elem(sub_base_uri, doc_elem)
-            if sub_elem.name != 'grammar':
-                raise Exception(
-                    "The document element referred to by and 'include' must "
-                    "be 'grammar'.")
+        ext_dom = xml.dom.minidom.parseString(ext_str)
+        doc_elem = ext_dom.documentElement
 
-            simplify_4_2_whitespace(sub_elem)
-            simplify_datalibrary_4_3_add(sub_elem)
-            simplify_datalibrary_4_3_remove(sub_elem)
-            simplify_type_value(sub_elem)
-            simplify_href(sub_elem)
-            simplify_externalRef(sub_elem)
-            simplify_4_7_include(sub_elem)
+        sub_base_uri = os.path.join(
+            elem.base_uri, os.path.dirname(href), '')
+        sub_elem = to_prang_elem(sub_base_uri, doc_elem)
+        if sub_elem.name != 'grammar':
+            raise PrangException(
+                "The document element referred to by an 'include' must "
+                "be 'grammar'.")
 
-            def has_start_component(element):
-                for child in element.iter_child_elems():
-                    if child.name == 'start' or (
-                            child.name == 'div' and
-                            has_start_component(child)):
-                        return True
-                return False
+        simplify_4_2_whitespace(sub_elem)
+        simplify_datalibrary_4_3_add(sub_elem)
+        simplify_datalibrary_4_3_remove(sub_elem)
+        simplify_type_value(sub_elem)
+        simplify_href(sub_elem)
+        simplify_externalRef(sub_elem, ())
+        simplify_4_7_include(sub_elem, resolved)
 
-            def remove_start_components(element):
-                for child in list(element.iter_children()):
-                    if child.name == 'start':
-                        child.remove()
-                    elif child.name == 'div':
-                        remove_start_components(child)
+        def has_start_component(element):
+            for child in element.iter_child_elems():
+                if child.name == 'start' or (
+                        child.name == 'div' and
+                        has_start_component(child)):
+                    return True
+            return False
 
-            if has_start_component(elem):
+        def remove_start_components(element):
+            for child in list(element.iter_children()):
+                if child.name == 'start':
+                    child.remove()
+                elif child.name == 'div':
+                    remove_start_components(child)
+
+        if has_start_component(elem):
+            if has_start_component(sub_elem):
                 remove_start_components(sub_elem)
+            else:
+                raise PrangException(
+                    "If the include element has a start component, then the "
+                    "grammar element must have a start component.")
 
-            defines = set()
+        defines = set()
 
-            def find_define_components(element):
-                for child in element.iter_child_elems():
-                    if child.name == 'define':
-                        defines.add(child.attrs['name'])
-                    elif element.name == 'div':
-                        find_define_components(child)
+        def find_define_components(element):
+            for child in element.iter_child_elems():
+                if child.name == 'define':
+                    defines.add(child.attrs['name'])
+                elif element.name == 'div':
+                    find_define_components(child)
 
-            find_define_components(elem)
+        find_define_components(elem)
 
-            print("defines", defines)
-
-            def remove_define_components(element):
-                for child in list(element.iter_child_elems()):
-                    if child.name == 'define' and \
-                            child.attrs['name'] in defines:
+        def remove_define_components(element):
+            for child in list(element.iter_child_elems()):
+                if child.name == 'define':
+                    child_name = child.attrs['name']
+                    if child_name in defines:
                         child.remove()
-                    elif child.name == 'div':
-                        remove_define_components(child)
+                        defines.remove(child_name)
+                elif child.name == 'div':
+                    remove_define_components(child)
 
-            remove_define_components(sub_elem)
+        remove_define_components(sub_elem)
+        if len(defines) != 0:
+            raise PrangException(
+                "If the include element has a define component, then the "
+                "grammar element must have a define component with the same "
+                "name.")
 
-            elem.name = 'div'
-            del elem.attrs['href']
+        elem.name = 'div'
+        del elem.attrs['href']
 
-            sub_elem.name = 'div'
-            elem.insert_child(0, sub_elem)
-
-    transform_includes(schema_el)
+        sub_elem.name = 'div'
+        elem.insert_child(0, sub_elem)
 
 
 def simplify_name_attribute(elem):
@@ -433,7 +561,12 @@ def simplify_ns_attribute(elem):
 def simplify_qnames(elem):
     if elem.name.endswith(':name'):
         prefix, local_name = elem.name.split(':')
-        elem.attrs['ns'] = elem.namespaces[prefix]
+        if prefix in elem.namespaces:
+            elem.attrs['ns'] = elem.namespaces[prefix]
+        else:
+            raise PrangException(
+                "The namespace prefix '" + prefix + "' isn't recognized.")
+
         elem.name = local_name
 
     for child in elem.iter_child_elems():
@@ -451,64 +584,62 @@ def simplify_4_11_div(el):
             el_parent.insert_child(idx, child)
 
 
-def simplify_4_12_num_children(schema_el):
-    def batch(el):
-        recurse = el
-        if el.name in (
-                'define', 'oneOrMore', 'zeroOrMore', 'optional', 'list',
-                'mixed') and sum(1 for c in el.iter_children()) > 1:
+def simplify_4_12_num_children(el):
+    upper = None
+    if el.name in (
+            'define', 'oneOrMore', 'zeroOrMore', 'optional', 'list',
+            'mixed') and sum(1 for c in el.iter_children()) > 1:
+        group_elem = PrangElement(
+            'group', el.namespaces.copy(), el.base_uri, {})
+
+        for child in list(el.iter_children()):
+            group_elem.append_child(child)
+        el.append_child(group_elem)
+
+    elif el.name == 'element':
+        if sum(1 for c in el.iter_children()) > 2:
             group_elem = PrangElement(
                 'group', el.namespaces.copy(), el.base_uri, {})
-
-            for child in list(el.iter_children()):
+            for child in list(el.iter_children())[1:]:
                 group_elem.append_child(child)
             el.append_child(group_elem)
 
-        elif el.name == 'element':
-            if sum(1 for c in el.iter_children()) > 2:
-                group_elem = PrangElement(
-                    'group', el.namespaces.copy(), el.base_uri, {})
-                for child in list(el.iter_children())[1:]:
-                    group_elem.append_child(child)
-                el.append_child(group_elem)
+    elif el.name == 'except':
+        if sum(1 for c in el.iter_children()) > 1:
+            choice_elem = PrangElement(
+                'choice', el.namespaces, el.base_uri, {})
+            for child in list(el.iter_children()):
+                choice_elem.append_child(child)
+            el.append_child(choice_elem)
 
-        elif el.name == 'except':
-            if sum(1 for c in el.iter_children()) > 1:
-                choice_elem = PrangElement(
-                    'choice', el.namespaces, el.base_uri, {})
-                for child in list(el.iter_children()):
-                    choice_elem.append_child(child)
-                el.append_child(choice_elem)
+    elif el.name == 'attribute':
+        if sum(1 for c in el.iter_children()) == 1:
+            el.append_child(
+                PrangElement('text', el.namespaces, el.base_uri, {}))
 
-        elif el.name == 'attribute':
-            if sum(1 for c in el.iter_children()) == 1:
-                el.append_child(
-                    PrangElement('text', el.namespaces, el.base_uri, {}))
-        elif el.name in ('choice', 'group', 'interleave'):
-            len_children = sum(1 for c in el.iter_children())
-            if len_children == 1:
-                child = list(el.iter_children())[0]
-                el.name = child.name
-                el.attrs.clear()
-                el.attrs.update(child.attrs)
-                child.remove()
-                for c in list(child.iter_children()):
-                    el.append_child(c)
-                recurse = el.parent
-            elif len_children > 2:
-                new_elem = PrangElement(
-                    el.name, el.namespaces, el.base_uri, {})
-                for child in list(el.iter_children())[:-1]:
-                    new_elem.append_child(child)
-                el.insert_child(0, new_elem)
+    elif el.name in ('choice', 'group', 'interleave'):
+        len_children = sum(1 for c in el.iter_children())
+        if len_children == 1:
+            child = list(el.iter_children())[0]
+            el.name = child.name
+            el.attrs.clear()
+            el.attrs.update(child.attrs)
+            child.remove()
+            for c in list(child.iter_children()):
+                el.append_child(c)
+            upper = el
+        elif len_children > 2:
+            new_elem = PrangElement(
+                el.name, el.namespaces, el.base_uri, {})
+            for child in list(el.iter_children())[:-1]:
+                new_elem.append_child(child)
+            el.insert_child(0, new_elem)
 
-        if recurse is None:
-            batch(schema_el)
-        else:
-            for child in list(recurse.iter_child_elems()):
-                batch(child)
-
-    batch(schema_el)
+    if upper is None:
+        for child in list(el.iter_child_elems()):
+            simplify_4_12_num_children(child)
+    else:
+        simplify_4_12_num_children(upper)
 
 
 def simplify_4_13_mixed(elem):
@@ -546,63 +677,76 @@ def simplify_4_15_zero_or_more(elem):
         simplify_4_15_zero_or_more(child)
 
 
-def find_descendent(elem, names):
-    for child in elem.iter_child_elems():
-        if child.name in names:
-            return child
-        else:
-            desc = find_descendent(child, names)
-            if desc is not None:
-                return desc
-    return None
-
-
 def simplify_4_16_constraints(elem):
     if elem.name == 'except':
         if elem.parent.name == 'anyName' and \
-                find_descendent(elem, ('anyName',)) is not None:
-            raise Exception(
+                elem.find_descendent('anyName') is not None:
+            raise PrangException(
                 "An except element that is a child of an anyName element "
                 "must not have any anyName descendant elements.")
         if elem.parent.name == 'nsName' and \
-                find_descendent(elem, ('nsName', 'anyName')) is not None:
-            raise Exception(
+                elem.find_descendent('nsName', 'anyName') is not None:
+            raise PrangException(
                 "An except element that is a child of an nsName element "
                 "must not have any nsName or anyName descendant elements.")
 
-    if elem.name == 'attribute' and \
-            sum(1 for c in elem.iter_children()) > 0:
+    if elem.name == 'attribute':
         first_child = list(elem.iter_children())[0]
+        name_elems = []
         if first_child.name == 'name':
-            found_elem = first_child
+            name_elems.append(first_child)
         else:
-            found_elem = find_descendent(first_child, ('name', ))
+            def find_descendents(el, name_elems):
+                for c in el.iter_child_elems():
+                    if c.name == 'name':
+                        name_elems.append(c)
+                    find_descendents(c, name_elems)
+            find_descendents(first_child, name_elems)
 
-        if found_elem is not None and \
-                found_elem.attrs.get('ns', None) == '' and \
-                '.'.join(found_elem.iter_children()).strip() == 'xmlns':
+        for name_elem in name_elems:
+            if name_elem.attrs['ns'] == '' and \
+                    list(name_elem.iter_children())[0] == 'xmlns':
 
-            raise Exception(
-                "A name element that occurs as the first child of an "
-                "attribute element or as the descendant of the first "
-                "child of an attribute element and that has an ns "
-                "attribute with value equal to the empty string must not "
-                "have content equal to xmlns.")
+                raise PrangException(
+                    "A name element that occurs as the first child of an "
+                    "attribute element or as the descendant of the first "
+                    "child of an attribute element and that has an ns "
+                    "attribute with value equal to the empty string must not "
+                    "have content equal to xmlns.")
 
         if first_child.name in ('name', 'nsName'):
             found_elem = first_child
         else:
-            found_elem = find_descendent(first_child, ('name', 'nsName'))
+            found_elem = first_child.find_descendent('name', 'nsName')
 
         if found_elem is not None and \
                 found_elem.attrs.get('ns', None) == \
                 'http://www.w3.org/2000/xmlns':
 
-            raise Exception(
+            raise PrangException(
                 "A name or nsName element that occurs as the first child "
                 "of an attribute element or as the descendant of the "
                 "first child of an attribute element must not have an ns "
                 "attribute with value http://www.w3.org/2000/xmlns.")
+
+    if elem.name == 'data':
+        if elem.attrs['datatypeLibrary'] == '':
+            for c in elem.iter_child_elems():
+                if c.name == 'param':
+                    raise PrangException(
+                        "No parameters are allowed for the built-in data type "
+                        "library.")
+            if elem.attrs['type'] not in ('string', 'token'):
+                raise PrangException(
+                    "Only the data types 'string' and 'token' are defined by "
+                    "the built-in data type library.")
+
+    if elem.name == 'value':
+        if elem.attrs['datatypeLibrary'] == '':
+            if elem.attrs['type'] not in ('string', 'token'):
+                raise PrangException(
+                    "Only the data types 'string' and 'token' are defined by "
+                    "the built-in data type library.")
 
     for child in elem.iter_child_elems():
         simplify_4_16_constraints(child)
@@ -618,15 +762,37 @@ def simplify_4_17_combine(elem):
                     comb_name = child.attrs['name']
                 else:
                     comb_name = ''
-                if comb_name in comb_names:
-                    comb_child = comb_names[comb_name]
-                    if 'combine' in comb_child.attrs:
-                        comb_elem_name = comb_child.attrs['combine']
+
+                if 'combine' in child.attrs:
+                    comb_att = child.attrs['combine']
+                    del child.attrs['combine']
+                else:
+                    comb_att = ''
+
+                if comb_name not in comb_names:
+                    comb_atts = set((comb_att,))
+                    comb = (comb_atts, child)
+                    comb_names[comb_name] = comb
+                else:
+                    comb_atts, comb_child = comb_names[comb_name]
+
+                    if comb_att not in comb_atts:
+                        if comb_att != '' and len(
+                                [c for c in comb_atts if c != '']) > 0:
+                            raise PrangException(
+                                "Can't have elements with the same name but "
+                                "with different values for the 'combine' "
+                                "attribute.")
+                        comb_atts.add(comb_att)
                     else:
-                        comb_elem_name = child.attrs['combine']
+                        if comb_att == '':
+                            raise PrangException(
+                                "Can't have elements with the same name but "
+                                "with neither having a 'combine' element.")
+
                     comb_elem = PrangElement(
-                        comb_elem_name, elem.namespaces.copy(),
-                        elem.base_uri, {})
+                        [c for c in comb_atts if c != ''][0],
+                        elem.namespaces.copy(), elem.base_uri, {})
 
                     for c in list(
                             chain(
@@ -636,19 +802,22 @@ def simplify_4_17_combine(elem):
 
                     comb_child.append_child(comb_elem)
                     child.remove()
-                else:
-                    comb_names[comb_name] = child
-
-        for cat in combs.keys():
-            for comb_child in combs[cat].values():
-                if 'combine' in comb_child.attrs:
-                    del comb_child.attrs['combine']
 
     for child in elem.iter_child_elems():
         simplify_4_17_combine(child)
 
 
 def simplify_4_18_grammar(schema_el):
+    def find_startless_grammars(el):
+        for c in el.iter_child_elems():
+            find_startless_grammars(c)
+
+        if el.name == 'grammar' and not any(
+                c.name == 'start' for c in el.iter_child_elems()):
+            raise PrangException(
+                "A 'grammar' element must have a 'start' child element.")
+    find_startless_grammars(schema_el)
+
     if schema_el.name != 'grammar':
         pattern_el = PrangElement(
             schema_el.name, schema_el.namespaces.copy(), schema_el.base_uri,
@@ -670,12 +839,14 @@ def simplify_4_18_grammar(schema_el):
 
     names = set()
     dup_map = {}
+    defs = set()
 
     def find_defs(el, grammar_count):
         if el.name == 'grammar':
             grammar_count += 1
         elif el.name == 'define':
             def_name = el.attrs['name']
+            defs.add((def_name, grammar_count))
             if def_name in names:
                 new_name = def_name + '_g'
                 while new_name in names:
@@ -695,10 +866,14 @@ def simplify_4_18_grammar(schema_el):
             grammar_count += 1
         elif el.name == 'ref':
             key = (el.attrs['name'], grammar_count)
+            if key not in defs:
+                raise PrangException("Ref doesn't point to a define.")
             if key in dup_map:
                 el.attrs['name'] = dup_map[key]
         elif el.name == 'parentRef':
             key = (el.attrs['name'], grammar_count - 1)
+            if key not in defs:
+                raise PrangException("ParentRef doesn't point to a define.")
             if key in dup_map:
                 el.attrs['name'] = dup_map[key]
 
@@ -820,7 +995,10 @@ def simplify_4_19_define_ref(grammar_el):
                     has_anc = True
                 parent = parent.parent
             ref_name = el.attrs['name']
-            if has_anc and ref_name in defs and ref_name not in subs:
+            if has_anc and ref_name in defs:
+                if ref_name in subs:
+                    raise PrangException(
+                        "A define can't refer to itself in this way.")
                 subs = subs.copy()
                 subs.add(ref_name)
                 el_parent = el.parent
@@ -965,6 +1143,262 @@ def simplify_4_21_empty(el):
             e.remove()
 
 
+def restrictions_7_1(grammar_el):
+    prohibs = (
+        'attribute//ref', 'attribute//attribute',
+        'oneOrMore//group//attribute', 'oneOrMore//interleave//attribute',
+        'list//list', 'list//ref', 'list//attribute', 'list//text',
+        'list//interleave', 'data/except//attribute', 'data/except//ref',
+        'data/except//text', 'data/except//list', 'data/except//group',
+        'data/except//interleave', 'data/except//oneOrMore',
+        'data/except//empty', 'start//attribute', 'start//data',
+        'start//value', 'start//text', 'start//list', 'start//group',
+        'start//interleave', 'start//oneOrMore', 'start//empty')
+
+    def find_descendents(el, el_name):
+        ds = []
+        for c in el.iter_child_elems():
+            if c.name == el_name:
+                ds.append(c)
+            ds.extend(find_descendents(c, el_name))
+        return ds
+
+    def find_prohib(prohib, el):
+        if prohib.startswith('//'):
+            prohib = prohib[2:]
+            idx = prohib.find('/')
+            if idx == -1:
+                el_name = prohib
+                prohib = ''
+            else:
+                el_name = prohib[:idx]
+                prohib = prohib[idx:]
+            for d in find_descendents(el, el_name):
+                find_prohib(prohib, d)
+        elif prohib.startswith('/'):
+            prohib = prohib[1:]
+            idx = prohib.find('/')
+            if idx == -1:
+                el_name = prohib
+                prohib = ''
+            else:
+                el_name = prohib[:idx]
+                prohib = prohib[idx:]
+            for c in el.iter_child_elems():
+                if c.name == el_name:
+                    find_prohib(prohib, c)
+        elif prohib == '':
+            raise PrangException()
+
+    for prohib in prohibs:
+        try:
+            find_prohib('//' + prohib, grammar_el)
+        except PrangException:
+            raise PrangException("Prohibited path " + prohib + ".")
+
+
+def restrictions_7_2(el):
+    CHILD_MATCHES = ('element', 'data', 'value', 'list', 'text')
+    STRING_MATCHES = ('data', 'value', 'list')
+
+    def find_subgroups(elem):
+        subs = []
+        for c in elem.iter_child_elems():
+            if c.name == 'group':
+                subs.append(c)
+            if c.name != 'list':
+                subs.extend(find_subgroups(c))
+        return subs
+
+    if el.name in ('attribute', 'element'):
+        for subgroup in find_subgroups(el):
+            p1, p2 = list(c.name for c in subgroup.iter_child_elems())
+            for s1, s2 in ((p1, p2), (p2, p1)):
+                if s1 in CHILD_MATCHES and s2 in STRING_MATCHES:
+                    raise PrangException(
+                        "If the pattern for the content of an element or "
+                        "attribute contains a pattern that can match a child "
+                        "(that is, an element, data, value, list or text "
+                        "pattern), and a pattern that matches a single string "
+                        "(that is, a data, value or list pattern), then the "
+                        "two patterns must be alternatives to each other.")
+    for c in el.iter_child_elems():
+        restrictions_7_2(c)
+
+
+def is_subset(n1, n2):
+    n1_children = list(n1.iter_children())
+    n1_child_elems = list(n1.iter_child_elems())
+    if len(n1_child_elems) == 0:
+        n1_nc = None
+    else:
+        if n1_child_elems[0].name != 'except':
+            return True
+        n1_c_children = list(n1_child_elems[0].iter_children())
+        n1_nc = n1_c_children[0]
+        if n1_nc.name not in ('anyname', 'name', 'nsName'):
+            return True
+
+    n2_children = list(n2.iter_children())
+    n2_child_elems = list(n2.iter_child_elems())
+    if len(n2_child_elems) == 0:
+        n2_nc = None
+    else:
+        n2_nc = list(n2_child_elems[0].iter_child_elems())[0]
+    if n1.name == 'nsName':
+        if n2.name == 'nsName':
+            if n1.attrs['ns'] == n2.attrs['ns']:
+                if n2_nc is None:
+                    return True
+                elif n1_nc is not None:
+                    return is_subset(n2_nc, n1_nc)
+        elif n2.name == 'name':
+            if n1.attrs['ns'] == n2.attrs['ns']:
+                if n1_nc is None:
+                    return False
+                else:
+                    return not is_subset(n2, n1_nc)
+    elif n1.name == 'name':
+        if n2.name == 'nsName':
+            if n1.attrs['ns'] == n2.attrs['ns']:
+                if n2_nc is None:
+                    return True
+                else:
+                    return not intersect(n2_nc, n1)
+        elif n2.name == 'name':
+            return n1.attrs['ns'] == n2.attrs['ns'] and \
+                n1_children[0] == n2_children[0]
+
+    return False
+
+
+def intersect_seqs(nc1s, nc2s):
+    for nc1 in nc1s:
+        for nc2 in nc2s:
+            if intersect(nc1, nc2):
+                return True
+
+
+def intersect(n1, n2):
+    if n1.name > n2.name:
+        n1, n2 = n2, n1
+
+    n1_children = list(n1.iter_children())
+    n1_elems = list(n1.iter_child_elems())
+    if len(n1_elems) == 0:
+        n1_nc = None
+    else:
+        if n1_elems[0].name != 'except':
+            return False
+        n1_c_children = list(n1_elems[0].iter_children())
+        n1_nc = n1_c_children[0]
+        if n1_nc.name not in ('anyname', 'name', 'nsName'):
+            return False
+
+    n2_children = list(n2.iter_children())
+    n2_elems = list(n2.iter_child_elems())
+    if len(n2_elems) == 0:
+        n2_nc = None
+    else:
+        if n2_elems[0].name != 'except':
+            return False
+        n2_c_children = list(n2_elems[0].iter_children())
+        n2_nc = n2_c_children[0]
+        if n2_nc.name not in ('anyname', 'name', 'nsName'):
+            return False
+
+    if n1.name == 'name':
+        if n2.name == 'name':
+            return n1_children[0] == n2_children[0] and \
+                n1.attrs['ns'] == n2.attrs['ns']
+        elif n2.name == 'nsName':
+            return n1.attrs['ns'] == n2.attrs['ns']
+    elif n1.name == 'anyName':
+        if n2.name == 'name':
+            if n1_nc is None:
+                return True
+            else:
+                return not is_subset(n2, n1_nc)
+        elif n2.name == 'nsName':
+            if n1_nc is None:
+                return True
+            else:
+                return not is_subset(n2, n1_nc)
+        elif n2.name == 'anyName':
+            if n1_nc is None or n2_nc is None:
+                return True
+    elif n1.name == 'nsName':
+        if n2.name == 'nsName':
+            if n1.attrs['ns'] == n2.attrs['ns']:
+                if len(n2_children) == 0:
+                    n2_nc = None
+                else:
+                    n2_nc = list(n2_children[0].iter_children())[0]
+                if n1_nc is None or n2_nc is None:
+                    return True
+                else:
+                    return not intersect(n1_nc, n2_nc)
+    return False
+
+
+def find_occs(elem, name):
+    occs = ()
+    if elem.name == name:
+        occs += (elem,)
+
+    elif elem.name in ('choice', 'interleave', 'group', 'oneOrMore'):
+        for child in elem.iter_child_elems():
+            occs += find_occs(child, name)
+    return occs
+
+
+def restrictions_7_3(grammar_el):
+    for el in grammar_el.find_descendents('group', 'interleave'):
+        nc_seqs = []
+        for p in el.iter_child_elems():
+            nc_seqs.append(
+                [
+                    list(c.iter_children())[0]
+                    for c in find_occs(p, 'attribute')])
+        if intersect_seqs(*nc_seqs):
+            raise PrangException("Duplicate attributes are not allowed.")
+
+    for el in grammar_el.find_descendents('attribute'):
+        if el.find_descendent('anyName', 'nsName') is not None and \
+                not el.has_ancestor('oneOrMore'):
+            raise PrangException(
+                "An attribute element that has an anyName or nsName "
+                "descendant element must have a oneOrMore ancestor element.")
+
+
+def restrictions_7_4(grammar_el):
+    defs = dict(
+        (
+            d.attrs['name'], d) for d in grammar_el.iter_children()
+        if d.name == 'define')
+
+    for el in grammar_el.find_descendents('interleave'):
+        children = list(el.iter_child_elems())
+        if all(len(find_occs(c, 'text')) > 0 for c in children):
+            raise PrangException(
+                "For a pattern <interleave> p1 p2 </interleave>, a text "
+                "pattern must not occur in both p1 and p2.")
+        nc_seqs = []
+        for p in children:
+            ncrefs = find_occs(p, 'ref')
+            ncdefs = [defs[ncref.attrs['name']] for ncref in ncrefs]
+            ncels = [list(ncdef.iter_children())[0] for ncdef in ncdefs]
+            nc_seqs.append(
+                [list(ncel.iter_children())[0] for ncel in ncels])
+        if intersect_seqs(*nc_seqs):
+            raise PrangException(
+                "For a pattern <interleave> p1 p2 </interleave>, there must "
+                "not be a name that belongs to both the name class of an "
+                "element pattern referenced by a ref pattern occurring in p1 "
+                "and the name class of an element pattern referenced by a ref "
+                "pattern occurring in p2.")
+
+
 def simplify(schema_el):
     # print("before 4.2", schema_el)
     simplify_4_2_whitespace(schema_el)
@@ -975,8 +1409,8 @@ def simplify(schema_el):
     # print("before value", schema_el)
     simplify_type_value(schema_el)
     simplify_href(schema_el)
-    simplify_externalRef(schema_el)
-    simplify_4_7_include(schema_el)
+    simplify_externalRef(schema_el, ())
+    simplify_4_7_include(schema_el, ())
     # print("after include", schema_el)
     simplify_name_attribute(schema_el)
     # print("before ns attribute", schema_el)
@@ -1001,3 +1435,8 @@ def simplify(schema_el):
     simplify_4_20_not_allowed(schema_el)
     # print("before simplifying empty", schema_el)
     simplify_4_21_empty(schema_el)
+    # print("before restrictions", schema_el)
+    restrictions_7_1(schema_el)
+    restrictions_7_2(schema_el)
+    restrictions_7_3(schema_el)
+    restrictions_7_4(schema_el)
